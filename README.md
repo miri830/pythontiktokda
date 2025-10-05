@@ -9,7 +9,6 @@ python -m venv venv
 
 # Virtual environment aktivləşdir
 # Windows üçün:
-venv\Scripts\activate
 # Mac/Linux üçün:
 source venv/bin/activate
 

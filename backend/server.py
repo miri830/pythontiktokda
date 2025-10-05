@@ -61,6 +61,14 @@ class User(BaseModel):
     total_tests: int = 0
     average_score: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Gamification
+    xp: int = 0
+    level: int = 1
+    streak_current: int = 0
+    streak_best: int = 0
+    last_active: Optional[datetime] = None
+    # Premium flag
+    is_premium: bool = False
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -81,6 +89,37 @@ class UserProfile(BaseModel):
     total_tests: int
     average_score: float
     is_admin: bool
+    is_premium: Optional[bool] = False
+
+class UserQuestionSubmission(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    user_name: str
+    category: str
+    question_text: str
+    options: List[str]
+    correct_answer: int
+    explanation: str
+    status: str = "pending"  # pending, approved, rejected
+    submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None
+
+class UserQuestionCreate(BaseModel):
+    category: str
+    question_text: str
+    options: List[str]
+    correct_answer: int
+    explanation: str
+
+class UserNotification(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    title: str
+    message: str
+    type: str = "info"  # info, success, warning, error
+    read: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Question(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -101,6 +140,7 @@ class QuestionCreate(BaseModel):
     options: Optional[List[str]] = None
     correct_answer: int
     explanation: str
+    is_premium: Optional[bool] = False
 
 
 
@@ -132,6 +172,46 @@ class AdminStats(BaseModel):
     total_questions: int
     total_tests: int
     recent_users: List[Dict]
+
+# User Quiz Models
+class UserQuiz(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    creator_id: str
+    creator_name: str
+    title: str
+    description: Optional[str] = ""
+    category: str
+    questions: List[Dict]  # List of question objects
+    is_public: bool = True
+    share_code: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    total_attempts: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class UserQuizCreate(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    category: str
+    questions: List[Dict]
+    is_public: bool = True
+
+class SharedQuizAttempt(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    quiz_id: str
+    quiz_title: str
+    quiz_creator_id: str
+    solver_id: Optional[str] = None
+    solver_name: str
+    answers: Dict[int, int]  # question_index -> answer_index
+    score: int
+    percentage: float
+    total_questions: int
+    correct_answers: int
+    completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class SharedQuizSubmission(BaseModel):
+    answers: Dict[int, int]
+    user_name: str
 
 # Helper functions
 def verify_password(plain_password, hashed_password):
@@ -558,35 +638,32 @@ async def get_me(current_user: User = Depends(get_current_user)):
 from bson import ObjectId
 
 # Test routes
+class StartOptions(BaseModel):
+    limit: Optional[int] = None
+    premium_only: Optional[bool] = False
+
 @api_router.post("/tests/start")
-async def start_test(current_user: User = Depends(get_current_user)):
+async def start_test(opts: Optional[StartOptions] = None, current_user: User = Depends(get_current_user)):
     print("Current user:", current_user)
-
-    # Get random 8 questions: target 2 per category, then fill remainder from any category
-    categories = ["python_syntax", "algorithms", "oop", "data_structures"]
-    selected_questions = []
-
-    # Try to take up to 2 from each category
-    for category in categories:
-        category_questions = await db.questions.find({"category": category}).to_list(None)
-        if len(category_questions) >= 2:
-            selected_questions.extend(random.sample(category_questions, 2))
-        elif len(category_questions) > 0:
-            # take what is available (0 or 1)
-            selected_questions.extend(category_questions[:1])
-
-    # If still less than 8, fill from any remaining questions
-    if len(selected_questions) < 8:
-        all_questions = await db.questions.find({}).to_list(None)
-        # exclude already selected by _id
-        selected_ids = {str(q.get("_id")) for q in selected_questions}
-        remaining = [q for q in all_questions if str(q.get("_id")) not in selected_ids]
-        needed = 8 - len(selected_questions)
-        if len(remaining) >= needed:
-            selected_questions.extend(random.sample(remaining, needed))
-        else:
-            # not enough globally
-            raise HTTPException(status_code=400, detail="Kifayət qədər sual yoxdur (ən azı 8 sual tələb olunur)")
+    # Mövcud bazadan təsadüfi suallar seç (limit verilə bilər)
+    # Premium rejim: premium istifadəçi üçün yalnız premium suallar; adi istifadəçi üçün premium suallar daxil edilməsin
+    query = {}
+    if not current_user.is_premium:
+        query = {"is_premium": {"$ne": True}}
+    elif opts and opts.premium_only:
+        query = {"is_premium": True}
+    all_questions = await db.questions.find(query).to_list(None)
+    if not all_questions:
+        raise HTTPException(status_code=400, detail="Kifayət qədər sual yoxdur")
+    requested = 8
+    if opts and opts.limit:
+        try:
+            requested = max(1, int(opts.limit))
+        except Exception:
+            requested = 8
+    if len(all_questions) < requested:
+        requested = len(all_questions)
+    selected_questions = random.sample(all_questions, requested)
     
     # Create test session (save only question ids as string)
     test_session = TestSession(
@@ -756,10 +833,16 @@ async def complete_test(
 
     questions_with_answers = []
     correct_count = 0
-    total = len(user_answers)
+    total = len(session.get("questions", []))
 
-    for qid, answer in user_answers.items():
-        question = await db.questions.find_one({"_id": ObjectId(qid)})
+    for qid in session.get("questions", []):
+        # Normalize qid to ObjectId if possible
+        try:
+            q_obj_id = ObjectId(qid)
+        except Exception:
+            q_obj_id = qid
+
+        question = await db.questions.find_one({"_id": q_obj_id})
         if not question:
             continue
 
@@ -780,11 +863,17 @@ async def complete_test(
             else:
                 letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
                 correct_index = letter_map.get(correct_index.upper(), None)
-        user_index = int(answer) if isinstance(answer, str) else answer
 
-        is_correct = (user_index == correct_index)
-        if is_correct:
-            correct_count += 1
+        # user's answer for this question (may be None)
+        raw_user_answer = user_answers.get(str(qid))
+        if raw_user_answer is None:
+            user_index = None
+            is_correct = False
+        else:
+            user_index = int(raw_user_answer) if isinstance(raw_user_answer, str) else raw_user_answer
+            is_correct = (user_index == correct_index)
+            if is_correct:
+                correct_count += 1
 
         questions_with_answers.append({
             "question": question.get("question_text"),
@@ -820,7 +909,7 @@ async def complete_test(
         "questions_with_answers": questions_with_answers
     }
 
-    # Update user aggregate stats
+    # Update user aggregate stats + gamification
     user_doc = await db.users.find_one({"id": current_user.id})
     if user_doc:
         prev_total = int(user_doc.get("total_tests", 0))
@@ -828,9 +917,41 @@ async def complete_test(
         new_total = prev_total + 1
         # weighted average by number of tests
         new_avg = ((prev_avg * prev_total) + percentage) / new_total if new_total > 0 else percentage
+        # XP gain: base = correct answers, bonus for high score
+        xp_gain = correct_count + (10 if percentage >= 80 else 0) + (5 if percentage >= 60 and percentage < 80 else 0)
+        now_dt = datetime.now(timezone.utc)
+        last_active = user_doc.get("last_active")
+        streak_current = int(user_doc.get("streak_current", 0))
+        streak_best = int(user_doc.get("streak_best", 0))
+        # Streak logic: if last_active is yesterday (UTC), increment; if today, keep; else reset
+        def date_only(dt):
+            return dt.astimezone(timezone.utc).date() if isinstance(dt, datetime) else None
+        today = now_dt.date()
+        if last_active:
+            last_date = date_only(last_active)
+            if last_date == today:
+                pass
+            elif (today - last_date).days == 1:
+                streak_current += 1
+            else:
+                streak_current = 1
+        else:
+            streak_current = 1
+        streak_best = max(streak_best, streak_current)
+        new_xp = int(user_doc.get("xp", 0)) + xp_gain
+        # Simple level curve: level up every 100 xp
+        new_level = max(1, int(new_xp // 100) + 1)
         await db.users.update_one(
             {"id": current_user.id},
-            {"$set": {"total_tests": new_total, "average_score": new_avg}}
+            {"$set": {
+                "total_tests": new_total,
+                "average_score": new_avg,
+                "xp": new_xp,
+                "level": new_level,
+                "streak_current": streak_current,
+                "streak_best": streak_best,
+                "last_active": now_dt
+            }}
         )
 
     # Store a test result document for history
@@ -852,6 +973,49 @@ async def complete_test(
     return result
 
 
+# Gamification summary for Dashboard
+@api_router.get("/gamification/summary")
+async def gamification_summary(current_user: User = Depends(get_current_user)):
+    now_dt = datetime.now(timezone.utc)
+    start_of_day = datetime(now_dt.year, now_dt.month, now_dt.day, tzinfo=timezone.utc)
+    start_of_week = start_of_day - timedelta(days=start_of_day.weekday())
+
+    # Aggregate test counts today and this week
+    daily_count = await db.test_results.count_documents({
+        "user_id": current_user.id,
+        "completed_at": {"$gte": start_of_day}
+    })
+    weekly_count = await db.test_results.count_documents({
+        "user_id": current_user.id,
+        "completed_at": {"$gte": start_of_week}
+    })
+
+    # Targets
+    daily_target = 1
+    weekly_target = 5
+
+    # Load fresh user doc for xp/level/streak
+    user_doc = await db.users.find_one({"id": current_user.id})
+    xp = int(user_doc.get("xp", 0))
+    level = int(user_doc.get("level", 1))
+    streak_current = int(user_doc.get("streak_current", 0))
+    streak_best = int(user_doc.get("streak_best", 0))
+    # XP to next level
+    next_level_at = level * 100
+    xp_in_level = xp - ((level - 1) * 100)
+    xp_progress = max(0, min(100, int((xp_in_level / 100) * 100)))
+
+    return {
+        "level": level,
+        "xp": xp,
+        "xp_progress": xp_progress,
+        "streak_current": streak_current,
+        "streak_best": streak_best,
+        "daily": {"done": daily_count, "target": daily_target},
+        "weekly": {"done": weekly_count, "target": weekly_target}
+    }
+
+
 @api_router.get("/tests/{session_id}/result")
 async def get_test_result(
     session_id: str,
@@ -867,15 +1031,20 @@ async def get_test_result(
     if "result" in session:
         return session["result"]
 
-    # Yoxdursa, /complete-dəki hesablamanı təkrar edək
+    # Yoxdursa, bütün suallar üzrə nəticəni hesabla (cavablanmayanlar da daxil)
     user_answers = session.get("answers", {})
 
     questions_with_answers = []
     correct_count = 0
-    total = len(user_answers)
+    total = len(session.get("questions", []))
 
-    for qid, answer in user_answers.items():
-        question = await db.questions.find_one({"_id": ObjectId(qid)})
+    for qid in session.get("questions", []):
+        try:
+            q_obj_id = ObjectId(qid)
+        except Exception:
+            q_obj_id = qid
+
+        question = await db.questions.find_one({"_id": q_obj_id})
         if not question:
             continue
 
@@ -896,11 +1065,16 @@ async def get_test_result(
             else:
                 letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
                 correct_index = letter_map.get(correct_index.upper(), None)
-        user_index = int(answer) if isinstance(answer, str) else answer
 
-        is_correct = (user_index == correct_index)
-        if is_correct:
-            correct_count += 1
+        raw_user_answer = user_answers.get(str(qid))
+        if raw_user_answer is None:
+            user_index = None
+            is_correct = False
+        else:
+            user_index = int(raw_user_answer) if isinstance(raw_user_answer, str) else raw_user_answer
+            is_correct = (user_index == correct_index)
+            if is_correct:
+                correct_count += 1
 
         questions_with_answers.append({
             "question": question.get("question_text"),
@@ -949,7 +1123,8 @@ async def get_leaderboard():
             "bio": user.get("bio", ""),
             "profile_image": user.get("profile_image"),
             "total_tests": user["total_tests"],
-            "average_score": round(user["average_score"], 1)
+            "average_score": round(user["average_score"], 1),
+            "is_premium": user.get("is_premium", False)
         })
     
     return leaderboard
@@ -986,6 +1161,9 @@ async def upload_profile_image(
     # Read and process image
     image_data = await file.read()
     image = Image.open(BytesIO(image_data))
+    # JPEG yazmaq üçün şəkli uyğun moda çevir (P, RGBA və s. -> RGB)
+    if image.mode not in ("RGB",):
+        image = image.convert("RGB")
     
     # Resize image
     image.thumbnail((200, 200), Image.Resampling.LANCZOS)
@@ -1003,7 +1181,167 @@ async def upload_profile_image(
     
     return {"profile_image": f"data:image/jpeg;base64,{image_base64}"}
 
+# Update bio
+class BioUpdate(BaseModel):
+    bio: str
+
+@api_router.post("/profile/update-bio")
+async def update_bio(payload: BioUpdate, current_user: User = Depends(get_current_user)):
+    safe_bio = (payload.bio or "").strip()
+    # Limit length to avoid abuse
+    if len(safe_bio) > 500:
+        raise HTTPException(status_code=422, detail="Bio 500 simvoldan uzun ola bilməz")
+
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {"bio": safe_bio}}
+    )
+    return {"bio": safe_bio}
+
+# Update full name
+class NameUpdate(BaseModel):
+    full_name: str
+
+@api_router.post("/profile/update-name")
+async def update_name(payload: NameUpdate, current_user: User = Depends(get_current_user)):
+    safe_name = (payload.full_name or "").strip()
+    if len(safe_name) < 2 or len(safe_name) > 100:
+        raise HTTPException(status_code=422, detail="Ad 2-100 simvol arası olmalıdır")
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {"full_name": safe_name}}
+    )
+    return {"full_name": safe_name}
+
+# User question submission
+@api_router.post("/submit-question")
+async def submit_question(question_data: UserQuestionCreate, current_user: User = Depends(get_current_user)):
+    # Create user question submission
+    submission = UserQuestionSubmission(
+        user_id=current_user.id,
+        user_name=current_user.full_name,
+        category=question_data.category,
+        question_text=question_data.question_text,
+        options=question_data.options,
+        correct_answer=question_data.correct_answer,
+        explanation=question_data.explanation
+    )
+    
+    submission_dict = prepare_for_mongo(submission.dict())
+    await db.user_question_submissions.insert_one(submission_dict)
+    
+    return {"message": "Sualınız təsdiqlənmək üçün göndərildi", "submission_id": submission.id}
+
+# User notifications
+@api_router.get("/notifications")
+async def get_notifications(current_user: User = Depends(get_current_user)):
+    notifications_cursor = db.user_notifications.find({"user_id": current_user.id}).sort("created_at", -1).limit(20)
+    notifications_raw = await notifications_cursor.to_list(None)
+    notifications = [parse_from_mongo(notif) for notif in notifications_raw]
+    return notifications
+
+@api_router.post("/notifications/{notification_id}/mark-read")
+async def mark_notification_read(notification_id: str, current_user: User = Depends(get_current_user)):
+    await db.user_notifications.update_one(
+        {"id": notification_id, "user_id": current_user.id},
+        {"$set": {"read": True}}
+    )
+    return {"message": "Bildiriş oxundu olaraq işarələndi"}
+
+# Test endpoint to create sample notifications
+@api_router.post("/test/create-notification")
+async def create_test_notification(current_user: User = Depends(get_current_user)):
+    # Create a test notification for the user
+    notification = UserNotification(
+        user_id=current_user.id,
+        title="Test Bildirişi! 🚀",
+        message="Bu bir test bildirişidir. Bildiriş sistemi düzgün işləyir!",
+        type="info"
+    )
+    await db.user_notifications.insert_one(prepare_for_mongo(notification.dict()))
+    return {"message": "Test bildirişi yaradıldı", "notification_id": notification.id}
+
 # Admin routes
+@api_router.get("/admin/question-submissions")
+async def get_question_submissions(admin: User = Depends(get_admin_user)):
+    submissions_cursor = db.user_question_submissions.find().sort("submitted_at", -1)
+    submissions_raw = await submissions_cursor.to_list(None)
+    submissions = [parse_from_mongo(sub) for sub in submissions_raw]
+    return submissions
+
+@api_router.post("/admin/question-submissions/{submission_id}/approve")
+async def approve_question_submission(submission_id: str, admin: User = Depends(get_admin_user)):
+    # Get submission
+    submission = await db.user_question_submissions.find_one({"id": submission_id})
+    if not submission:
+        raise HTTPException(status_code=404, detail="Sual təqdimi tapılmadı")
+    
+    # Create question from submission
+    question_data = {
+        "category": submission["category"],
+        "question_text": submission["question_text"],
+        "options": submission["options"],
+        "correct_answer": submission["correct_answer"],
+        "explanation": submission["explanation"],
+        "is_premium": False,
+        "created_at": datetime.now(timezone.utc)
+    }
+    
+    qid = str(uuid4())
+    question_data["id"] = qid
+    
+    # Insert question
+    await db.questions.insert_one(prepare_for_mongo(question_data))
+    
+    # Update submission status
+    await db.user_question_submissions.update_one(
+        {"id": submission_id},
+        {"$set": {
+            "status": "approved",
+            "reviewed_at": datetime.now(timezone.utc),
+            "reviewed_by": admin.id
+        }}
+    )
+    
+    # Send notification to user
+    notification = UserNotification(
+        user_id=submission["user_id"],
+        title="Sualınız təsdiqləndi! 🎉",
+        message=f"'{submission['question_text'][:50]}...' sualınız təsdiqləndi və sistemə əlavə olundu.",
+        type="success"
+    )
+    await db.user_notifications.insert_one(prepare_for_mongo(notification.dict()))
+    
+    return {"message": "Sual təsdiqləndi və əlavə olundu", "question_id": qid}
+
+@api_router.post("/admin/question-submissions/{submission_id}/reject")
+async def reject_question_submission(submission_id: str, admin: User = Depends(get_admin_user)):
+    # Get submission
+    submission = await db.user_question_submissions.find_one({"id": submission_id})
+    if not submission:
+        raise HTTPException(status_code=404, detail="Sual təqdimi tapılmadı")
+    
+    # Update submission status
+    await db.user_question_submissions.update_one(
+        {"id": submission_id},
+        {"$set": {
+            "status": "rejected",
+            "reviewed_at": datetime.now(timezone.utc),
+            "reviewed_by": admin.id
+        }}
+    )
+    
+    # Send notification to user
+    notification = UserNotification(
+        user_id=submission["user_id"],
+        title="Sualınız ləğv edildi 😔",
+        message=f"'{submission['question_text'][:50]}...' sualınız təsdiqlənmədi. Zəhmət olmasa daha keyfiyyətli suallar göndərin.",
+        type="warning"
+    )
+    await db.user_notifications.insert_one(prepare_for_mongo(notification.dict()))
+    
+    return {"message": "Sual ləğv edildi"}
+
 @api_router.get("/admin/stats")
 async def get_admin_stats(admin: User = Depends(get_admin_user)):
     total_users = await db.users.count_documents({})
@@ -1042,6 +1380,15 @@ async def delete_user(user_id: str, admin: User = Depends(get_admin_user)):
     await db.test_sessions.delete_many({"user_id": user_id})
     
     return {"message": "İstifadəçi uğurla silindi"}
+
+@api_router.post("/admin/users/{user_id}/toggle-premium")
+async def toggle_premium(user_id: str, admin: User = Depends(get_admin_user)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="İstifadəçi tapılmadı")
+    new_value = not bool(user.get("is_premium", False))
+    await db.users.update_one({"id": user_id}, {"$set": {"is_premium": new_value}})
+    return {"is_premium": new_value}
 
 @api_router.get("/admin/questions")
 async def get_all_questions(admin: User = Depends(get_admin_user)):
@@ -1098,12 +1445,22 @@ async def create_question(question_data: QuestionCreate, admin: User = Depends(g
         "question_text": question_data.question_text,
         "options": options,
         "correct_answer": correct_index,
-        "explanation": question_data.explanation
+        "explanation": question_data.explanation,
+        "is_premium": bool(question_data.is_premium)
     }
 
     insert_result = await db.questions.insert_one(question_dict)
     created = await db.questions.find_one({"_id": insert_result.inserted_id})
     return parse_from_mongo(created)
+
+
+# Admin: 500 sualı 17 mövzu üzrə seed et
+class SeedRequest(BaseModel):
+    total: int = 500
+
+@api_router.post("/admin/seed-questions")
+async def seed_questions(req: dict, admin: User = Depends(get_admin_user)):
+    raise HTTPException(status_code=410, detail="Bu endpoint deaktiv edilib")
 
 
  
@@ -1120,8 +1477,28 @@ async def initialize_data():
     if existing_questions > 0:
         return {"message": "Məlumatlar artıq mövcuddur"}
     
-    # 2. Insert sample questions
-    for question_data in sample_questions:
+    # 2. Insert Informatika topics sample questions (17 kateqoriya)
+    topics_questions = [
+        {"category": "İnformasiya və informasiya prosesləri", "question_text": "İnformasiya nədir?", "options": ["Məlumatın mənalandırılmış forması", "Yalnız rəqəmlər", "Təsadüfi simvollar", "Səs faylı"], "correct_answer": 0, "explanation": "İnformasiya – istifadəçi üçün mənası olan məlumatdır."},
+        {"category": "Say sistemləri", "question_text": "İkiyəlik say sistemində 1010 hansı ədədə bərabərdir?", "options": ["8", "9", "10", "12"], "correct_answer": 2, "explanation": "1010(2) = 10(10)."},
+        {"category": "İnformasiyanın kodlaşdırılması və miqdarının ölçülməsi", "question_text": "1 bayt neçə bitdən ibarətdir?", "options": ["4", "8", "16", "32"], "correct_answer": 1, "explanation": "1 bayt = 8 bit."},
+        {"category": "Modelləşdirmə", "question_text": "Model nədir?", "options": ["Orijinal obyektin sadələşdirilmiş təsviri", "Proqram", "Cədvəl", "Format"], "correct_answer": 0, "explanation": "Model – obyektin və ya prosesin mühüm cəhətlərini əks etdirən təsviridir."},
+        {"category": "Kompüterin aparat təminatı", "question_text": "RAM nə üçün istifadə olunur?", "options": ["Daimi yaddaş", "Müvəqqəti işləmə yaddaşı", "İnternet bağlantısı", "Qrafika emalı"], "correct_answer": 1, "explanation": "RAM prosessorun işlədiyi məlumatları müvəqqəti saxlayır."},
+        {"category": "Kompüterin proqram təminatı", "question_text": "Aşağıdakılardan hansı sistem proqramıdır?", "options": ["Brauzer", "Antivirus", "Əməliyyat sistemi", "Tekst redaktoru"], "correct_answer": 2, "explanation": "ƏS sistem proqram təminatıdır."},
+        {"category": "Əməliyyat sistemi", "question_text": "ƏS-in əsas funksiyası nədir?", "options": ["Qrafik çəkmək", "Proqram tərtibi", "Resursların idarə edilməsi", "Musiqi oxutmaq"], "correct_answer": 2, "explanation": "ƏS kompüter resurslarını idarə edir."},
+        {"category": "Mətnlərin email", "question_text": "Email göndərərkən “Mövzu” sahəsi nə üçündür?", "options": ["Fayl əlavə etmək", "Məktubun başlığını yazmaq", "Şəkil yerləşdirmək", "Gizli surət"], "correct_answer": 1, "explanation": "Mövzu – məktubun başlığıdır."},
+        {"category": "Elektron cədvəllər", "question_text": "Excel-də cəmi hesablamaq üçün hansı funksiya istifadə olunur?", "options": ["AVERAGE", "SUM", "COUNT", "MAX"], "correct_answer": 1, "explanation": "SUM – cəmləmə funksiyasıdır."},
+        {"category": "Verilənlər bazası", "question_text": "SQL-də cədvəldən bütün sətirləri seçən əmri qeyd edin.", "options": ["GET * FROM", "PULL *", "SELECT * FROM", "FETCH ALL"], "correct_answer": 2, "explanation": "SELECT * FROM table – bütün sətirləri seçir."},
+        {"category": "Kompüter qrafikası", "question_text": "Vektor qrafikasının xüsusiyyəti nədir?", "options": ["Piksellərdən ibarətdir", "Koordinat və əyrilərə əsaslanır", "Rəng dərinliyi yoxdur", "Yaddaş tələb etmir"], "correct_answer": 1, "explanation": "Vektor qrafika riyazi təsvirlərdən istifadə edir."},
+        {"category": "Alqoritm", "question_text": "Alqoritmin əsas xassəsi hansıdır?", "options": ["Təsadüfilik", "Müəyyənlik", "Sonsuzluq", "Belirsizlik"], "correct_answer": 1, "explanation": "Alqoritm addımlarının mənası aydın olmalıdır (müəyyənlik)."},
+        {"category": "Proqramlaşdırma", "question_text": "Yüksək səviyyəli dillərin üstünlüyü nədir?", "options": ["Maşın kodudur", "İnsana daha yaxın sintaksis", "Yavaş işləyir", "Portativ deyil"], "correct_answer": 1, "explanation": "Yüksək səviyyəli dillər oxunaqlıdır və daşınandır."},
+        {"category": "Kompüter şəbəkəsi", "question_text": "IP ünvan nədir?", "options": ["Email ünvanı", "Fiziki ünvan", "Şəbəkədə cihazın unikal identifikatoru", "DNS adı"], "correct_answer": 2, "explanation": "IP – şəbəkədə identifikator rolunu oynayır."},
+        {"category": "İnternet", "question_text": "HTTP nədir?", "options": ["Proqramlaşdırma dili", "Şəbəkə protokolu", "Brauzer", "Ağ kart"], "correct_answer": 1, "explanation": "HTTP – veb üçün tətbiq səviyyəli protokoldur."},
+        {"category": "Veb-proqramlaşdırma", "question_text": "HTML nədir?", "options": ["Stil dili", "Ssenari dili", "İşarələmə dili", "Baza dili"], "correct_answer": 2, "explanation": "HTML – veb səhifənin strukturunu təsvir edir."},
+        {"category": "İnformasiya təhlükəsizliyi", "question_text": "Parol üçün ən yaxşı praktika hansıdır?", "options": ["Qısa və sadə", "Hər yerdə eyni", "Uzun və mürəkkəb", "Heç vaxt dəyişməmək"], "correct_answer": 2, "explanation": "Uzun və mürəkkəb parollar daha təhlükəsizdir."}
+    ]
+
+    for question_data in topics_questions:
         question = Question(**question_data)
         question_dict = prepare_for_mongo(question.dict())
         await db.questions.insert_one(question_dict)
@@ -1130,7 +1507,7 @@ async def initialize_data():
     admin_user = User(
         email="admin@pythontest.az",
         full_name="Admin",
-        bio="Python Test Platforması Admini",
+        bio="İnformatika testləri admini",
         is_admin=True
     )
     
@@ -1141,6 +1518,169 @@ async def initialize_data():
     await db.users.insert_one(admin_dict)
     
     return {"message": "Məlumatlar uğurla əlavə edildi", "admin_email": "admin@pythontest.az", "admin_password": "admin123"}
+
+# User Quiz Endpoints
+@api_router.post("/user-quizzes/create")
+async def create_user_quiz(quiz_data: UserQuizCreate, current_user: User = Depends(get_current_user)):
+    quiz = UserQuiz(
+        creator_id=current_user.id,
+        creator_name=current_user.full_name,
+        **quiz_data.dict()
+    )
+    
+    quiz_dict = prepare_for_mongo(quiz.dict())
+    result = await db.user_quizzes.insert_one(quiz_dict)
+    
+    # Return the created quiz with share_code
+    created_quiz = await db.user_quizzes.find_one({"id": quiz.id})
+    normalized_quiz = parse_from_mongo(created_quiz)
+    
+    return {
+        "message": "Quiz uğurla yaradıldı", 
+        "quiz_id": quiz.id,
+        "quiz": normalized_quiz
+    }
+
+@api_router.get("/user-quizzes/my-quizzes")
+async def get_my_quizzes(current_user: User = Depends(get_current_user)):
+    quizzes_cursor = db.user_quizzes.find({"creator_id": current_user.id})
+    quizzes = await quizzes_cursor.to_list(None)
+    
+    normalized_quizzes = []
+    for quiz in quizzes:
+        quiz_data = parse_from_mongo(quiz)
+        # Get attempt count
+        attempt_count = await db.shared_quiz_attempts.count_documents({"quiz_id": quiz_data["id"]})
+        quiz_data["total_attempts"] = attempt_count
+        normalized_quizzes.append(quiz_data)
+    
+    return normalized_quizzes
+
+@api_router.get("/shared-quiz/{share_code}")
+async def get_shared_quiz(share_code: str):
+    quiz = await db.user_quizzes.find_one({"share_code": share_code})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz tapılmadı")
+    
+    quiz_data = parse_from_mongo(quiz)
+    # Don't include correct answers in the response
+    for question in quiz_data["questions"]:
+        if "correct_answer" in question:
+            del question["correct_answer"]
+        if "explanation" in question:
+            del question["explanation"]
+    
+    return quiz_data
+
+@api_router.post("/shared-quiz/{share_code}/submit")
+async def submit_shared_quiz(share_code: str, submission: SharedQuizSubmission):
+    # Get the quiz with correct answers
+    quiz = await db.user_quizzes.find_one({"share_code": share_code})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz tapılmadı")
+    
+    quiz_data = parse_from_mongo(quiz)
+    
+    # Calculate score
+    total_questions = len(quiz_data["questions"])
+    correct_answers = 0
+    
+    for question_index, user_answer in submission.answers.items():
+        if question_index < len(quiz_data["questions"]):
+            correct_answer = quiz_data["questions"][question_index]["correct_answer"]
+            if user_answer == correct_answer:
+                correct_answers += 1
+    
+    score = int((correct_answers / total_questions) * 100) if total_questions > 0 else 0
+    
+    # Save attempt
+    attempt = SharedQuizAttempt(
+        quiz_id=quiz_data["id"],
+        quiz_title=quiz_data["title"],
+        quiz_creator_id=quiz_data["creator_id"],
+        solver_name=submission.user_name,
+        answers=submission.answers,
+        score=score,
+        percentage=score,
+        total_questions=total_questions,
+        correct_answers=correct_answers
+    )
+    
+    attempt_dict = prepare_for_mongo(attempt.dict())
+    await db.shared_quiz_attempts.insert_one(attempt_dict)
+    
+    # Update quiz attempt count
+    await db.user_quizzes.update_one(
+        {"id": quiz_data["id"]},
+        {"$inc": {"total_attempts": 1}}
+    )
+    
+    # Send notification to quiz creator
+    notification = UserNotification(
+        user_id=quiz_data["creator_id"],
+        title="Quiz Həll Edildi! 🎉",
+        message=f"{submission.user_name} adlı istifadəçi \"{quiz_data['title']}\" quizinizi həll etdi və {score}% nəticə əldə etdi.",
+        type="success"
+    )
+    
+    notification_dict = prepare_for_mongo(notification.dict())
+    await db.notifications.insert_one(notification_dict)
+    
+    # Return results with correct answers for review
+    return {
+        "score": score,
+        "percentage": score,
+        "correct_answers": correct_answers,
+        "total_questions": total_questions,
+        "questions_with_answers": quiz_data["questions"]
+    }
+
+@api_router.get("/quiz-stats/{quiz_id}")
+async def get_quiz_stats(quiz_id: str, current_user: User = Depends(get_current_user)):
+    # Verify ownership
+    quiz = await db.user_quizzes.find_one({"id": quiz_id, "creator_id": current_user.id})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz tapılmadı və ya icazəniz yoxdur")
+    
+    # Get all attempts
+    attempts_cursor = db.shared_quiz_attempts.find({"quiz_id": quiz_id})
+    attempts = await attempts_cursor.to_list(None)
+    
+    if not attempts:
+        return {
+            "quiz_title": quiz["title"],
+            "total_attempts": 0,
+            "average_score": 0,
+            "attempts": []
+        }
+    
+    # Calculate statistics
+    total_attempts = len(attempts)
+    average_score = sum(attempt["score"] for attempt in attempts) / total_attempts
+    
+    normalized_attempts = []
+    for attempt in attempts:
+        attempt_data = parse_from_mongo(attempt)
+        normalized_attempts.append(attempt_data)
+    
+    return {
+        "quiz_title": quiz["title"],
+        "total_attempts": total_attempts,
+        "average_score": round(average_score, 1),
+        "attempts": normalized_attempts
+    }
+
+@api_router.delete("/user-quizzes/{quiz_id}")
+async def delete_user_quiz(quiz_id: str, current_user: User = Depends(get_current_user)):
+    # Verify ownership
+    result = await db.user_quizzes.delete_one({"id": quiz_id, "creator_id": current_user.id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Quiz tapılmadı və ya icazəniz yoxdur")
+    
+    # Also delete related attempts
+    await db.shared_quiz_attempts.delete_many({"quiz_id": quiz_id})
+    
+    return {"message": "Quiz uğurla silindi"}
 
 
 # Include the router in the main app

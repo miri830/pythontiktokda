@@ -60,10 +60,10 @@ const LoginPage = () => {
             </div>
           </div>
           <h1 className="text-4xl font-bold text-white mb-2 font-['Space_Grotesk']">
-            Python Test
+            İnformatika testləri
           </h1>
           <p className="text-indigo-200 text-lg">
-            Python biliklərinizi sınayın
+            İnformatika biliklərinizi sınayın
           </p>
         </div>
 

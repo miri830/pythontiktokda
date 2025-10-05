@@ -137,7 +137,9 @@ const LeaderboardPage = () => {
               <div className="flex flex-col items-center">
                 <div className="relative">
                   <Link to={`/profile/${leaderboard[1].id}`}>
-                    <div className="w-20 h-20 bg-gradient-to-r from-gray-300 to-gray-500 rounded-full flex items-center justify-center shadow-xl hover:scale-105 transition-transform cursor-pointer">
+                    <div className={`w-20 h-20 bg-gradient-to-r from-gray-300 to-gray-500 rounded-full flex items-center justify-center shadow-xl hover:scale-105 transition-transform cursor-pointer ${
+                      leaderboard[1].is_premium ? 'ring-4 ring-yellow-500 ring-offset-2' : ''
+                    }`}>
                       {leaderboard[1].profile_image ? (
                         <img
                           src={leaderboard[1].profile_image}
@@ -165,7 +167,9 @@ const LeaderboardPage = () => {
               <div className="flex flex-col items-center">
                 <div className="relative">
                   <Link to={`/profile/${leaderboard[0].id}`}>
-                    <div className="w-24 h-24 bg-gradient-to-r from-yellow-400 to-yellow-600 rounded-full flex items-center justify-center shadow-2xl hover:scale-105 transition-transform cursor-pointer">
+                    <div className={`w-24 h-24 bg-gradient-to-r from-yellow-400 to-yellow-600 rounded-full flex items-center justify-center shadow-2xl hover:scale-105 transition-transform cursor-pointer ${
+                      leaderboard[0].is_premium ? 'ring-4 ring-yellow-500 ring-offset-2' : ''
+                    }`}>
                       {leaderboard[0].profile_image ? (
                         <img
                           src={leaderboard[0].profile_image}
@@ -193,7 +197,9 @@ const LeaderboardPage = () => {
               <div className="flex flex-col items-center">
                 <div className="relative">
                   <Link to={`/profile/${leaderboard[2].id}`}>
-                    <div className="w-20 h-20 bg-gradient-to-r from-orange-400 to-orange-600 rounded-full flex items-center justify-center shadow-xl hover:scale-105 transition-transform cursor-pointer">
+                    <div className={`w-20 h-20 bg-gradient-to-r from-orange-400 to-orange-600 rounded-full flex items-center justify-center shadow-xl hover:scale-105 transition-transform cursor-pointer ${
+                      leaderboard[2].is_premium ? 'ring-4 ring-yellow-500 ring-offset-2' : ''
+                    }`}>
                       {leaderboard[2].profile_image ? (
                         <img
                           src={leaderboard[2].profile_image}
@@ -250,7 +256,9 @@ const LeaderboardPage = () => {
 
                         {/* Profile */}
                         <div className="flex items-center space-x-3">
-                          <div className="w-12 h-12 bg-gray-200 rounded-full overflow-hidden">
+                          <div className={`w-12 h-12 bg-gray-200 rounded-full overflow-hidden ${
+                            entry.is_premium ? 'ring-4 ring-yellow-500 ring-offset-1' : ''
+                          }`}>
                             {entry.profile_image ? (
                               <img
                                 src={entry.profile_image}

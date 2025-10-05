@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Progress } from '../components/ui/progress';
@@ -20,6 +20,7 @@ const API_BASE = process.env.REACT_APP_BACKEND_URL + '/api';
 
 const TestPage = () => {
   const { sessionId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [testData, setTestData] = useState(null);
@@ -27,10 +28,64 @@ const TestPage = () => {
   const [answers, setAnswers] = useState({});
   const [loading, setLoading] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(30);
+  const [totalTimeLeft, setTotalTimeLeft] = useState(null);
+  const [hardLimit, setHardLimit] = useState(null);
+  const [timeUp, setTimeUp] = useState(false);
+  const [answeredByIndex, setAnsweredByIndex] = useState({});
 
   useEffect(() => {
+    // Read query params for quick modes
+    const params = new URLSearchParams(location.search);
+    const limitParam = params.get('limit');
+    const timeParam = params.get('time');
+    if (limitParam) {
+      const lim = parseInt(limitParam, 10);
+      if (!isNaN(lim) && lim > 0) setHardLimit(lim);
+    }
+    if (timeParam) {
+      const t = parseInt(timeParam, 10);
+      if (!isNaN(t) && t > 0) setTotalTimeLeft(t);
+    }
     loadQuestion(0);
   }, [sessionId]);
+
+  // Reset and start 30s timer on question change
+  useEffect(() => {
+    if (!testData) return;
+    // Quick modes: global timer var, per-sual 30s taymeri söndür
+    if (totalTimeLeft !== null) return;
+    setTimeLeft(30);
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleAutoAdvance();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [testData?.question?.id, currentQuestion, totalTimeLeft]);
+
+  // Global timer for quick modes
+  useEffect(() => {
+    if (totalTimeLeft === null) return;
+    if (timeUp) return;
+    const interval = setInterval(() => {
+      setTotalTimeLeft((prev) => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          clearInterval(interval);
+          setTimeUp(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [totalTimeLeft, timeUp]);
 
   const loadQuestion = async (questionIndex) => {
     try {
@@ -49,6 +104,9 @@ const TestPage = () => {
       setTestData(data);
       setCurrentQuestion(questionIndex);
       setSelectedOption(data.user_answer !== undefined ? data.user_answer : null);
+      if (data.user_answer !== undefined) {
+        setAnsweredByIndex(prev => ({ ...prev, [questionIndex]: data.user_answer }));
+      }
       setLoading(false);
     } catch (error) {
       toast.error(error.message);
@@ -83,6 +141,7 @@ const TestPage = () => {
         ...prev,
         [testData.question.id || testData.question._id]: selectedOption
       }));
+      setAnsweredByIndex(prev => ({ ...prev, [currentQuestion]: selectedOption }));
 
     } catch (error) {
       toast.error('Cavab saxlanıla bilmədi');
@@ -91,8 +150,11 @@ const TestPage = () => {
 
   const handleNext = async () => {
     await submitAnswer();
-    if (currentQuestion < testData.total_questions - 1) {
+    const maxQuestions = hardLimit ? hardLimit : testData.total_questions;
+    if (currentQuestion < maxQuestions - 1) {
       loadQuestion(currentQuestion + 1);
+    } else {
+      await handleFinishTest();
     }
   };
 
@@ -104,9 +166,28 @@ const TestPage = () => {
     }
   };
 
+  // Auto-advance when time runs out (skip saving if no answer)
+  const handleAutoAdvance = async () => {
+    if (currentQuestion === testData.total_questions - 1) {
+      if (selectedOption !== null) {
+        await submitAnswer();
+      }
+      await handleFinishTest();
+      return;
+    }
+    if (selectedOption !== null) {
+      await submitAnswer();
+    }
+    loadQuestion(currentQuestion + 1);
+  };
+
   const handleQuestionJump = async (questionIndex) => {
     await submitAnswer();
-    loadQuestion(questionIndex);
+    // Restrict jumping beyond limit if set
+    const maxQuestions = hardLimit ? hardLimit : testData.total_questions;
+    if (questionIndex < maxQuestions) {
+      loadQuestion(questionIndex);
+    }
   };
 
   const handleFinishTest = async () => {
@@ -144,7 +225,8 @@ const TestPage = () => {
     );
   }
 
-  const progressPercentage = ((currentQuestion + 1) / testData.total_questions) * 100;
+  const totalForDisplay = hardLimit ? Math.min(hardLimit, testData.total_questions) : testData.total_questions;
+  const progressPercentage = ((currentQuestion + 1) / totalForDisplay) * 100;
   const answeredCount = Object.keys(answers).length + (selectedOption !== null ? 1 : 0);
 
   return (
@@ -157,7 +239,7 @@ const TestPage = () => {
               <div className="w-10 h-10 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center mr-3">
                 <Code className="w-6 h-6 text-white" />
               </div>
-              <h1 className="text-xl font-bold gradient-text">Python Test</h1>
+              <h1 className="text-xl font-bold gradient-text">İnformatika testləri</h1>
             </div>
 
             <div className="flex items-center space-x-4">
@@ -178,9 +260,21 @@ const TestPage = () => {
                 <h2 className="text-lg font-semibold text-gray-800">
                   Test İrəliləməsi
                 </h2>
-                <div className="text-sm text-gray-600">
-                  {currentQuestion + 1}/{testData.total_questions} sual
-                </div>
+              <div className="text-sm text-gray-600 flex items-center gap-3">
+                {totalTimeLeft === null && (
+                  <span className="px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 font-medium">
+                    {timeLeft}s
+                  </span>
+                )}
+                {totalTimeLeft !== null && (
+                  <span className="px-2 py-1 rounded-md bg-red-100 text-red-700 font-medium">
+                    {totalTimeLeft}s
+                  </span>
+                )}
+                <span>
+                  {currentQuestion + 1}/{totalForDisplay} sual
+                </span>
+              </div>
               </div>
 
               <Progress
@@ -208,8 +302,8 @@ const TestPage = () => {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-4 gap-2">
-                  {Array.from({ length: testData.total_questions }, (_, index) => {
-                    const isAnswered = answers[`question_${index}`] !== undefined ||
+                  {Array.from({ length: totalForDisplay }, (_, index) => {
+                    const isAnswered = answeredByIndex[index] !== undefined ||
                       (index === currentQuestion && selectedOption !== null);
                     const isCurrent = index === currentQuestion;
 
@@ -334,7 +428,7 @@ const TestPage = () => {
                     )}
                   </div>
 
-                  {currentQuestion === testData.total_questions - 1 ? (
+                  {currentQuestion === totalForDisplay - 1 ? (
                     <Button
                       onClick={handleFinishTest}
                       className="bg-green-600 hover:bg-green-700 btn-3d"
@@ -357,6 +451,18 @@ const TestPage = () => {
           </div>
         </div>
       </div>
+      {timeUp && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 shadow-2xl max-w-md w-full text-center">
+            <h3 className="text-2xl font-bold text-gray-800 mb-2">Vaxt bitdi</h3>
+            <p className="text-gray-600 mb-6">Məğlub oldunuz. Yenidən sınayın!</p>
+            <div className="flex items-center justify-center gap-3">
+              <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => navigate('/missions')}>Missiyalara qayıt</Button>
+              <Button variant="outline" onClick={() => navigate('/dashboard')}>Ana səhifə</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

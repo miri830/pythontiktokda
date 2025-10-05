@@ -82,7 +82,7 @@ const RegisterPage = () => {
             </div>
           </div>
           <h1 className="text-4xl font-bold text-white mb-2 font-['Space_Grotesk']">
-            Python Test
+            İnformatika testləri
           </h1>
           <p className="text-violet-200 text-lg">
             Bizə qoşulun və biliklərinizi sınayın
@@ -96,7 +96,7 @@ const RegisterPage = () => {
               Qeydiyyat
             </CardTitle>
             <CardDescription className="text-violet-200">
-              Yeni hesab yaradın və Python testlərinə başlayın
+              Yeni hesab yaradın və İnformatika testlərinə başlayın
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">

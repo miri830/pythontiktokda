@@ -81,7 +81,7 @@ const ContactPage = () => {
             Bizimlə Əlaqə ✨
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Python Test platformasının yaradıcısı ilə əlaqə saxlayın. 
+            İnformatika testləri platformasının yaradıcısı ilə əlaqə saxlayın. 
             Suallarınız, təklifləriniz və ya sadəcə salamlaşmaq üçün!
           </p>
         </div>
@@ -96,11 +96,11 @@ const ContactPage = () => {
               Mirzə Dadaşov
             </h3>
             <p className="text-lg text-gray-600 mb-4">
-              Python Test Platforması Yaradıcısı
+              İnformatika testləri platforması yaradıcısı
             </p>
             <p className="text-gray-700 max-w-2xl mx-auto leading-relaxed">
               Proqramlaşdırma həvəskarı və təhsil sahəsində innovasiyaları dəstəkləyən developer. 
-              Bu platformanı Azərbaycan dilində Python öyrənənlər üçün yaratdım. 
+              Bu platformanı İnformatika sahəsində öyrənənlər üçün yaratdım. 
               Məqsədim bilikləri əlçatan və əyləncəli etməkdir! 🚀
             </p>
           </CardContent>
@@ -202,7 +202,7 @@ const ContactPage = () => {
               Təşəkkür edirik! 🙏
             </h3>
             <p className="text-lg opacity-90 max-w-2xl mx-auto">
-              Python Test platformasını istifadə etdiyiniz üçün təşəkkür edirik. 
+              İnformatika testləri platformasını istifadə etdiyiniz üçün təşəkkür edirik. 
               Fikirləriniz və təklifləriniz bizim üçün çox dəyərlidir. 
               Birgə daha yaxşı bir təhsil platforması yaradaq! 💪
             </p>

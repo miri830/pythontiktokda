@@ -15,7 +15,10 @@ import {
   Award,
   BookOpen,
   Camera,
-  Edit
+  Edit,
+  Flame,
+  Star,
+  Lock
 } from 'lucide-react';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -28,6 +31,8 @@ const ProfilePage = () => {
   const [recentTests, setRecentTests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [tempName, setTempName] = useState('');
 
   const isOwnProfile = currentUser?.id === userId;
 
@@ -104,11 +109,11 @@ const ProfilePage = () => {
   };
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('az-AZ', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    const dt = new Date(dateString);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}.${m}.${d}`;
   };
 
   const getScoreColor = (percentage) => {
@@ -118,6 +123,39 @@ const ProfilePage = () => {
     if (percentage >= 60) return 'text-orange-600';
     return 'text-red-600';
   };
+
+  // Badge collection computed from profile stats (demo)
+  const computeBadges = (p) => {
+    const list = [];
+    if (!p) return list;
+    // Level badges
+    const level = p.level || 1;
+    if (level >= 5) list.push({ key: 'level5', title: 'Lv 5+', icon: Award, color: 'from-yellow-400 to-orange-500' });
+    if (level >= 10) list.push({ key: 'level10', title: 'Lv 10+', icon: Star, color: 'from-indigo-500 to-purple-600' });
+    // Streak badges
+    const streak = p.streak_best || 0;
+    if (streak >= 3) list.push({ key: 'streak3', title: '3 gün streak', icon: Flame, color: 'from-red-500 to-pink-500' });
+    if (streak >= 7) list.push({ key: 'streak7', title: '7 gün streak', icon: Flame, color: 'from-rose-500 to-fuchsia-600' });
+    // Tests completed
+    if ((p.total_tests || 0) >= 10) list.push({ key: 'tests10', title: '10 test', icon: Trophy, color: 'from-green-500 to-emerald-600' });
+    return list;
+  };
+  const earnedBadges = computeBadges(profile);
+  const earnedKeys = new Set(earnedBadges.map(b => b.key));
+
+  // Full catalog (locked by default until earned)
+  const ALL_BADGES = [
+    { key: 'level5', title: 'Lv 5+', icon: Award, color: 'from-yellow-400 to-orange-500' },
+    { key: 'level10', title: 'Lv 10+', icon: Star, color: 'from-indigo-500 to-purple-600' },
+    { key: 'streak3', title: '3 gün streak', icon: Flame, color: 'from-red-500 to-pink-500' },
+    { key: 'streak7', title: '7 gün streak', icon: Flame, color: 'from-rose-500 to-fuchsia-600' },
+    { key: 'tests10', title: '10 test', icon: Trophy, color: 'from-green-500 to-emerald-600' },
+    // əlavə nümunə nişanlar (kilidli görünəcək):
+    { key: 'speed3', title: 'Sürətli: 3 sual/1 dəq', icon: Trophy, color: 'from-cyan-500 to-sky-600' },
+    { key: 'perfect80', title: '80%+ nəticə', icon: Star, color: 'from-amber-400 to-orange-600' },
+    { key: 'perfect90', title: '90%+ nəticə', icon: Star, color: 'from-yellow-400 to-lime-500' },
+    { key: 'topicMaster', title: 'Mövzu ustası', icon: Award, color: 'from-purple-500 to-fuchsia-600' },
+  ];
 
   if (loading) {
     return (
@@ -162,7 +200,7 @@ const ProfilePage = () => {
             <div className="flex flex-col md:flex-row items-center md:items-start space-y-6 md:space-y-0 md:space-x-8">
               {/* Profile Image */}
               <div className="relative">
-                <div className="w-32 h-32 rounded-full overflow-hidden bg-gray-200 shadow-xl">
+                <div className={`w-32 h-32 rounded-full overflow-hidden bg-gray-200 shadow-xl ${profile.is_premium ? 'ring-4 ring-yellow-400 ring-offset-4 ring-offset-white animate-pulse' : ''}`}>
                   {profile.profile_image ? (
                     <img
                       src={profile.profile_image}
@@ -201,22 +239,111 @@ const ProfilePage = () => {
               {/* Profile Info */}
               <div className="flex-1 text-center md:text-left">
                 <h2 className="text-3xl font-bold text-gray-800 mb-2 font-['Space_Grotesk']">
-                  {profile.full_name}
+                  {editingName ? (
+                    <input
+                      className="border border-gray-300 rounded-md px-3 py-1 text-lg"
+                      value={tempName}
+                      onChange={(e) => setTempName(e.target.value)}
+                    />
+                  ) : (
+                    profile.full_name
+                  )}
                   {profile.is_admin && (
                     <span className="ml-3 px-3 py-1 bg-purple-100 text-purple-800 text-sm rounded-full">
                       Admin
                     </span>
                   )}
+                  {profile.is_premium && (
+                    <span className="ml-3 px-3 py-1 bg-yellow-100 text-yellow-800 text-sm rounded-full shadow-sm border border-yellow-200">
+                      Premium istifadəçi
+                    </span>
+                  )}
                 </h2>
+                {isOwnProfile && (
+                  <div className="flex items-center gap-2 mb-4">
+                    {!editingName ? (
+                      <Button variant="outline" size="sm" onClick={() => { setEditingName(true); setTempName(profile.full_name || ''); }}>Adı Düzəlt</Button>
+                    ) : (
+                      <>
+                        <Button size="sm" onClick={async () => {
+                          try {
+                            const token = localStorage.getItem('token');
+                            const res = await fetch(`${API_BASE}/profile/update-name`, {
+                              method: 'POST',
+                              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ full_name: tempName })
+                            });
+                            if (!res.ok) {
+                              const err = await res.json().catch(() => ({}));
+                              throw new Error(err.detail || 'Ad yenilənmədi');
+                            }
+                            const data = await res.json();
+                            setProfile(prev => ({ ...prev, full_name: data.full_name }));
+                            updateUser({ ...currentUser, full_name: data.full_name });
+                            setEditingName(false);
+                            toast.success('Ad yeniləndi');
+                          } catch (e) {
+                            toast.error(e.message || 'Xəta baş verdi');
+                          }
+                        }}>Yadda saxla</Button>
+                        <Button variant="outline" size="sm" onClick={() => setEditingName(false)}>Ləğv et</Button>
+                      </>
+                    )}
+                  </div>
+                )}
                 
                 <p className="text-gray-600 text-lg mb-4">
                   {profile.email}
                 </p>
                 
-                {profile.bio && (
-                  <p className="text-gray-700 mb-6 max-w-md">
-                    {profile.bio}
-                  </p>
+                {isOwnProfile ? (
+                  <div className="mb-6 max-w-md">
+                    <textarea
+                      className="w-full rounded-md border border-gray-300 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      rows={3}
+                      placeholder="Bio yazın..."
+                      value={profile.bio || ''}
+                      onChange={(e) => setProfile(prev => ({ ...prev, bio: e.target.value }))}
+                    />
+                    <div className="mt-2 flex justify-end">
+                      <Button
+                        onClick={async () => {
+                          try {
+                            const token = localStorage.getItem('token');
+                            const res = await fetch(`${API_BASE}/profile/update-bio`, {
+                              method: 'POST',
+                              headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                              },
+                              body: JSON.stringify({ bio: profile.bio || '' })
+                            });
+                            if (!res.ok) {
+                              const err = await res.json().catch(() => ({}));
+                              throw new Error(err.detail || 'Bio yenilənmədi');
+                            }
+                            const data = await res.json();
+                            setProfile(prev => ({ ...prev, bio: data.bio }));
+                            if (isOwnProfile) {
+                              updateUser({ ...currentUser, bio: data.bio });
+                            }
+                            toast.success('Bio yeniləndi');
+                          } catch (err) {
+                            toast.error(err.message || 'Xəta baş verdi');
+                          }
+                        }}
+                        className="px-4"
+                      >
+                        Bio-nu Saxla
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  profile.bio && (
+                    <p className="text-gray-700 mb-6 max-w-md">
+                      {profile.bio}
+                    </p>
+                  )
                 )}
 
                 {/* Quick Stats */}
@@ -242,6 +369,36 @@ const ProfilePage = () => {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Badge Collection */}
+        <Card className="bg-white/60 backdrop-blur-sm border-0 shadow-lg mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center text-xl">
+              <Award className="w-6 h-6 mr-2 text-yellow-500" />
+              Nişan Kolleksiyası
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {ALL_BADGES.map((b) => {
+                const unlocked = earnedKeys.has(b.key);
+                return (
+                  <div key={b.key} className={`p-4 rounded-xl border flex flex-col items-center text-center ${unlocked ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-200'}`}>
+                    <div className={`w-16 h-16 rounded-full bg-gradient-to-br flex items-center justify-center shadow-lg mb-2 ${unlocked ? b.color : 'from-gray-300 to-gray-400'} ${unlocked ? '' : 'opacity-60'}`}>
+                      {unlocked ? (
+                        <b.icon className="w-8 h-8 text-white" />
+                      ) : (
+                        <Lock className="w-7 h-7 text-white/90" />
+                      )}
+                    </div>
+                    <div className={`text-sm font-medium ${unlocked ? 'text-gray-800' : 'text-gray-400'}`}>{b.title}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-center mt-4 text-sm text-gray-500">və daha çoxu...</div>
           </CardContent>
         </Card>
 
@@ -331,7 +488,7 @@ const ProfilePage = () => {
                         </div>
                         <div>
                           <h3 className="font-semibold text-gray-800">
-                            Python Test
+                            İnformatika testləri
                           </h3>
                           <p className="text-sm text-gray-600 flex items-center">
                             <Calendar className="w-4 h-4 mr-1" />
@@ -365,7 +522,7 @@ const ProfilePage = () => {
               </h3>
               <p className="text-gray-500 mb-6">
                 {isOwnProfile 
-                  ? 'İlk testinizi edərək Python biliklərinizi sınayın!'
+                  ? 'İlk testinizi edərək İnformatika biliklərinizi sınayın!'
                   : 'Test nəticələri burada görünəcək'}
               </p>
               {isOwnProfile && (

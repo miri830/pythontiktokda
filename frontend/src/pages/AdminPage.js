@@ -34,6 +34,7 @@ const AdminPage = () => {
   const [stats, setStats] = useState({});
   const [users, setUsers] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [questionSubmissions, setQuestionSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isAddingQuestion, setIsAddingQuestion] = useState(false);
 
@@ -43,7 +44,8 @@ const AdminPage = () => {
     question_text: '',
     options: ['', '', '', ''],
     correct_answer: 0,
-    explanation: ''
+    explanation: '',
+    is_premium: false
   });
 
   const handleAddQuestion = async (e) => {
@@ -69,17 +71,8 @@ const AdminPage = () => {
         return;
       }
 
-      const categoryMap = {
-        'Python Sintaksisi': 'python_syntax',
-        'Alqorimlər': 'algorithms',
-        'OOP': 'oop',
-        'Məlumat Strukturları': 'data_structures',
-        'python_syntax': 'python_syntax',
-        'algorithms': 'algorithms',
-        'oop': 'oop',
-        'data_structures': 'data_structures'
-      };
-      const category = categoryMap[newQuestion.category] || newQuestion.category;
+      // Kateqoriya artıq 17 mövzudan birinin tam adı kimi saxlanacaq
+      const category = newQuestion.category;
 
       const correct = Number(newQuestion.correct_answer);
       if (Number.isNaN(correct) || correct < 0 || correct >= cleanedOptions.length) {
@@ -93,7 +86,8 @@ const AdminPage = () => {
         question_text: newQuestion.question_text.trim(),
         options: cleanedOptions,
         correct_answer: correct,
-        explanation: (newQuestion.explanation || '').trim()
+        explanation: (newQuestion.explanation || '').trim(),
+        is_premium: Boolean(newQuestion.is_premium)
       };
 
       const res = await fetch(`${API_BASE}/admin/questions`, {
@@ -171,6 +165,15 @@ const AdminPage = () => {
         setQuestions(questionsData);
       }
 
+      // Fetch question submissions
+      const submissionsResponse = await fetch(`${API_BASE}/admin/question-submissions`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (submissionsResponse.ok) {
+        const submissionsData = await submissionsResponse.json();
+        setQuestionSubmissions(submissionsData);
+      }
+
     } catch (error) {
       toast.error('Məlumatlar yüklənə bilmədi');
     } finally {
@@ -196,6 +199,79 @@ const AdminPage = () => {
       }
     } catch (error) {
       toast.error(error.message);
+    }
+  };
+
+  // Question submission approval/rejection
+  const handleApproveSubmission = async (submissionId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/admin/question-submissions/${submissionId}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (!response.ok) throw new Error('Təsdiqlənə bilmədi');
+      
+      toast.success('Sual təsdiqlədi və əlavə olundu! 🎉');
+      
+      // Update submissions list
+      setQuestionSubmissions(prev => 
+        prev.map(sub => 
+          sub.id === submissionId 
+            ? { ...sub, status: 'approved' }
+            : sub
+        )
+      );
+      
+      // Refresh questions list
+      fetchData();
+      
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
+  const handleRejectSubmission = async (submissionId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/admin/question-submissions/${submissionId}/reject`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (!response.ok) throw new Error('Ləğv edilə bilmədi');
+      
+      toast.success('Sual ləğv edildi');
+      
+      // Update submissions list
+      setQuestionSubmissions(prev => 
+        prev.map(sub => 
+          sub.id === submissionId 
+            ? { ...sub, status: 'rejected' }
+            : sub
+        )
+      );
+      
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
+  // Toggle premium for user
+  const handleTogglePremium = async (userId, makePremium) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/admin/users/${userId}/toggle-premium`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Premium dəyişdirilə bilmədi');
+      const updated = await res.json();
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_premium: updated.is_premium } : u));
+      toast.success(updated.is_premium ? 'Premium aktivləşdirildi' : 'Premium ləğv edildi');
+    } catch (e) {
+      toast.error(e.message || 'Xəta baş verdi');
     }
   };
 
@@ -246,7 +322,25 @@ const AdminPage = () => {
     );
   }
 
-  const categories = ['Python Sintaksisi', 'Alqorimlər', 'OOP', 'Məlumat Strukturları'];
+  const categories = [
+    'İnformasiya və informasiya prosesləri',
+    'Say sistemləri',
+    'İnformasiyanın kodlaşdırılması və miqdarının ölçülməsi',
+    'Modelləşdirmə',
+    'Kompüterin aparat təminatı',
+    'Kompüterin proqram təminatı',
+    'Əməliyyat sistemi',
+    'Mətnlərin email',
+    'Elektron cədvəllər',
+    'Verilənlər bazası',
+    'Kompüter qrafikası',
+    'Alqoritm',
+    'Proqramlaşdırma',
+    'Kompüter şəbəkəsi',
+    'İnternet',
+    'Veb-proqramlaşdırma',
+    'İnformasiya təhlükəsizliyi'
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
@@ -283,7 +377,8 @@ const AdminPage = () => {
           {[
             { id: 'dashboard', label: 'İstatistika', icon: BarChart3 },
             { id: 'users', label: 'İstifadəçilər', icon: Users },
-            { id: 'questions', label: 'Suallar', icon: BookOpen }
+            { id: 'questions', label: 'Suallar', icon: BookOpen },
+            { id: 'submissions', label: 'Sual Təqdimləri', icon: AlertTriangle }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -372,7 +467,7 @@ const AdminPage = () => {
                           {user.total_tests} test
                         </p>
                         <p className="text-sm text-gray-500">
-                          {new Date(user.created_at).toLocaleDateString('az-AZ')}
+                          {(() => { const dt=new Date(user.created_at); const y=dt.getFullYear(); const m=String(dt.getMonth()+1).padStart(2,'0'); const d=String(dt.getDate()).padStart(2,'0'); return `${y}.${m}.${d}`; })()}
                         </p>
                       </div>
                     </div>
@@ -431,8 +526,11 @@ const AdminPage = () => {
                         </p>
 
                         <p className="text-xs text-gray-500">
-                          {new Date(user.created_at).toLocaleDateString('az-AZ')}
+                          {(() => { const dt=new Date(user.created_at); const y=dt.getFullYear(); const m=String(dt.getMonth()+1).padStart(2,'0'); const d=String(dt.getDate()).padStart(2,'0'); return `${y}.${m}.${d}`; })()}
                         </p>
+                        {user.is_premium && (
+                          <p className="text-xs text-yellow-700 font-semibold">Premium</p>
+                        )}
                       </div>
                       {!user.is_admin && (
                         <Button
@@ -442,6 +540,16 @@ const AdminPage = () => {
                           className="border-red-200 text-red-700 hover:bg-red-50"
                         >
                           <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {!user.is_admin && (
+                        <Button
+                          onClick={() => handleTogglePremium(user.id, !user.is_premium)}
+                          variant="outline"
+                          size="sm"
+                          className="border-yellow-200 text-yellow-700 hover:bg-yellow-50"
+                        >
+                          {user.is_premium ? 'Premiumu ləğv et' : 'Premium edin'}
                         </Button>
                       )}
                     </div>
@@ -544,6 +652,16 @@ const AdminPage = () => {
                       />
                     </div>
 
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="premiumQuestion"
+                        type="checkbox"
+                        checked={newQuestion.is_premium}
+                        onChange={(e) => setNewQuestion({ ...newQuestion, is_premium: e.target.checked })}
+                      />
+                      <Label htmlFor="premiumQuestion">Premium sual</Label>
+                    </div>
+
                     <Button
                       onClick={handleAddQuestion}
                       disabled={isAddingQuestion}
@@ -623,6 +741,120 @@ const AdminPage = () => {
               </CardContent>
             </Card>
 
+          </div>
+        )}
+
+        {/* Submissions Tab */}
+        {activeTab === 'submissions' && (
+          <div className="space-y-6 scale-in">
+            <Card className="bg-white/60 backdrop-blur-sm border-0 shadow-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <AlertTriangle className="w-6 h-6 mr-2 text-orange-600" />
+                  İstifadəçi Sual Təqdimləri ({questionSubmissions.filter(s => s.status === 'pending').length} gözləyir)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-6">
+                  {questionSubmissions.length === 0 ? (
+                    <div className="text-center py-12">
+                      <AlertTriangle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <h3 className="text-xl font-medium text-gray-600 mb-2">
+                        Sual təqdimi yoxdur
+                      </h3>
+                      <p className="text-gray-500">
+                        İstifadəçilər helə sual göndərməyib
+                      </p>
+                    </div>
+                  ) : (
+                    questionSubmissions.map((submission) => (
+                      <div key={submission.id} className="bg-white rounded-xl border-2 border-gray-200 p-6">
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                              <User className="w-5 h-5 text-blue-600" />
+                            </div>
+                            <div>
+                              <h4 className="font-semibold text-gray-800">{submission.user_name}</h4>
+                              <p className="text-sm text-gray-500">
+                                {new Date(submission.submitted_at).toLocaleDateString('az-AZ')}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                              submission.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              submission.status === 'approved' ? 'bg-green-100 text-green-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {submission.status === 'pending' ? 'Gözləyir' :
+                               submission.status === 'approved' ? 'Təsdiqləndi' : 'Ləğv edildi'}
+                            </span>
+                            {submission.status === 'pending' && (
+                              <div className="flex space-x-2">
+                                <Button
+                                  onClick={() => handleApproveSubmission(submission.id)}
+                                  size="sm"
+                                  className="bg-green-500 hover:bg-green-600 text-white"
+                                >
+                                  🎉 Təsdiqlə
+                                </Button>
+                                <Button
+                                  onClick={() => handleRejectSubmission(submission.id)}
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-red-200 text-red-700 hover:bg-red-50"
+                                >
+                                  ❌ Ləğv et
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mb-3">
+                          <span className="inline-block px-2 py-1 bg-indigo-100 text-indigo-800 rounded text-xs font-medium">
+                            {submission.category}
+                          </span>
+                        </div>
+
+                        <p className="text-gray-800 mb-4 leading-relaxed font-medium">
+                          {submission.question_text}
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                          {submission.options?.map((option, optionIndex) => (
+                            <div
+                              key={optionIndex}
+                              className={`p-3 rounded-lg border-2 ${
+                                optionIndex === submission.correct_answer
+                                  ? 'border-green-500 bg-green-100 text-green-800'
+                                  : 'border-gray-200 bg-gray-50 text-gray-700'
+                              }`}
+                            >
+                              <span className="font-medium mr-2">
+                                {String.fromCharCode(65 + optionIndex)}.
+                              </span>
+                              {option}
+                              {optionIndex === submission.correct_answer && (
+                                <span className="ml-2 text-green-600">✓</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="bg-blue-50 p-4 rounded-lg">
+                          <h4 className="font-medium text-blue-800 mb-2">📝 İzahat:</h4>
+                          <p className="text-blue-700 text-sm leading-relaxed">
+                            {submission.explanation}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>

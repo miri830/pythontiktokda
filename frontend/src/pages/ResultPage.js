@@ -82,13 +82,13 @@ const ResultPage = () => {
     if (!result) return;
     if (navigator.share) {
       navigator.share({
-        title: 'Python Test Nəticəm',
-        text: `Python testində ${result.percentage}% nəticə əldə etdim! 🎉`,
+        title: 'İnformatika testləri nəticəm',
+        text: `İnformatika testlərində ${result.percentage}% nəticə əldə etdim! 🎉`,
         url: window.location.href
       });
     } else {
       navigator.clipboard.writeText(
-        `Python testində ${result.percentage}% nəticə əldə etdim! 🎉 ${window.location.href}`
+        `İnformatika testlərində ${result.percentage}% nəticə əldə etdim! 🎉 ${window.location.href}`
       );
       toast.success('Nəticə kopyalandı!');
     }

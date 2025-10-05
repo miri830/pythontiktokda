@@ -8,9 +8,16 @@ import Dashboard from './pages/Dashboard';
 import TestPage from './pages/TestPage';
 import ResultPage from './pages/ResultPage';
 import LeaderboardPage from './pages/LeaderboardPage';
+import MissionsPage from './pages/MissionsPage';
 import ProfilePage from './pages/ProfilePage';
 import AdminPage from './pages/AdminPage';
 import ContactPage from './pages/ContactPage';
+import SubmitQuestionPage from './pages/SubmitQuestionPage';
+import NotificationsPage from './pages/NotificationsPage';
+import CreateQuizPage from './pages/CreateQuizPage';
+import MyQuizzesPage from './pages/MyQuizzesPage';
+import SharedQuizPage from './pages/SharedQuizPage';
+import QuizStatsPage from './pages/QuizStatsPage';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL + '/api';
 
@@ -228,6 +235,14 @@ function App() {
               } 
             />
             <Route 
+              path="/missions" 
+              element={
+                <ProtectedRoute>
+                  <MissionsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route 
               path="/test/:sessionId" 
               element={
                 <ProtectedRoute>
@@ -252,6 +267,22 @@ function App() {
               } 
             />
             <Route 
+              path="/submit-question" 
+              element={
+                <ProtectedRoute>
+                  <SubmitQuestionPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/notifications" 
+              element={
+                <ProtectedRoute>
+                  <NotificationsPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
               path="/profile/:userId" 
               element={
                 <ProtectedRoute>
@@ -272,6 +303,36 @@ function App() {
               element={
                 <ProtectedRoute>
                   <ContactPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/create-quiz" 
+              element={
+                <ProtectedRoute>
+                  <CreateQuizPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/my-quizzes" 
+              element={
+                <ProtectedRoute>
+                  <MyQuizzesPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/shared-quiz/:shareCode" 
+              element={
+                <SharedQuizPage />
+              } 
+            />
+            <Route 
+              path="/quiz-stats/:quizId" 
+              element={
+                <ProtectedRoute>
+                  <QuizStatsPage />
                 </ProtectedRoute>
               } 
             />
