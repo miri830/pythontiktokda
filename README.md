@@ -32,3 +32,4 @@ yarn install
 
 # Frontend işə sal
 yarn start
+1111
