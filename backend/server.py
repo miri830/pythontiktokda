@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timedelta, timezone
 import jwt
@@ -16,10 +16,7 @@ import random
 import base64
 from io import BytesIO
 from PIL import Image
-from fastapi.middleware.cors import CORSMiddleware
-import uuid
 from bson import ObjectId
-from datetime import datetime, timezone
 
 
 
@@ -176,7 +173,7 @@ class AdminStats(BaseModel):
     total_users: int
     total_questions: int
     total_tests: int
-    recent_users: List[Dict]
+    recent_users: List[Dict[str, Any]]
 
 # User Quiz Models
 class UserQuiz(BaseModel):
@@ -578,7 +575,7 @@ async def delete_question(question_id: str, admin: User = Depends(get_admin_user
     conditions = [{"id": question_id}]
     # try as ObjectId too
     try:
-        conditions.append({"_id": ObjectId(question_id)})
+        conditions.append({"_id": str(ObjectId(question_id))})
     except Exception:
         pass
 
@@ -604,7 +601,7 @@ async def register(user_data: UserCreate):
         email=user_data.email,
         full_name=user_data.full_name,
         bio=user_data.bio,
-        notify_new_questions=user_data.notify_new_questions
+        notify_new_questions=user_data.notify_new_questions if user_data.notify_new_questions is not None else True
     )
     
     user_dict = user.dict()
@@ -675,7 +672,7 @@ async def start_test(opts: Optional[StartOptions] = None, current_user: User = D
             query = {"is_premium": {"$ne": True}}
         elif opts and opts.premium_only:
             query = {"is_premium": True}
-        all_questions = await db.questions.find(query).to_list(None)
+        all_questions = await db.questions.find(query).to_list(1000)
         if not all_questions:
             raise HTTPException(status_code=400, detail="Kifayət qədər sual yoxdur")
         requested = 8
@@ -859,13 +856,24 @@ async def complete_test(
     if not session:
         raise HTTPException(status_code=404, detail="Test sessiyası tapılmadı")
 
+    # Ensure session is a dictionary and has the required structure
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Test sessiyası düzgün formatda deyil")
+
     user_answers = session.get("answers", {})
 
     questions_with_answers = []
     correct_count = 0
-    total = len(session.get("questions", []))
+    
+    # Safely get questions list with proper type checking
+    questions_data = session.get("questions", [])
+    if not isinstance(questions_data, list):
+        questions_data = []
+    
+    total = len(questions_data)
 
-    for qid in session.get("questions", []):
+    # Iterate through questions with proper type checking
+    for qid in questions_data:
         # Normalize qid to ObjectId if possible
         try:
             q_obj_id = ObjectId(qid)
@@ -959,9 +967,9 @@ async def complete_test(
         today = now_dt.date()
         if last_active:
             last_date = date_only(last_active)
-            if last_date == today:
+            if last_date and last_date == today:
                 pass
-            elif (today - last_date).days == 1:
+            elif last_date and (today - last_date).days == 1:
                 streak_current += 1
             else:
                 streak_current = 1
@@ -1026,6 +1034,8 @@ async def gamification_summary(current_user: User = Depends(get_current_user)):
 
     # Load fresh user doc for xp/level/streak
     user_doc = await db.users.find_one({"id": current_user.id})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="İstifadəçi tapılmadı")
     xp = int(user_doc.get("xp", 0))
     level = int(user_doc.get("level", 1))
     streak_current = int(user_doc.get("streak_current", 0))
@@ -1062,13 +1072,21 @@ async def get_test_result(
         return session["result"]
 
     # Yoxdursa, bütün suallar üzrə nəticəni hesabla (cavablanmayanlar da daxil)
+    # Check if session is a valid dict
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=404, detail="Test sessiyası düzgün formatda deyil")
+        
     user_answers = session.get("answers", {})
 
     questions_with_answers = []
     correct_count = 0
-    total = len(session.get("questions", []))
+    # Safely get questions list
+    questions_list = session.get("questions", [])
+    if not isinstance(questions_list, list):
+        questions_list = []
+    total = len(questions_list)
 
-    for qid in session.get("questions", []):
+    for qid in questions_list:
         try:
             q_obj_id = ObjectId(qid)
         except Exception:
@@ -1141,21 +1159,46 @@ async def get_leaderboard():
         {"total_tests": {"$gt": 0}},
         {"password": 0}
     ).sort("average_score", -1).limit(50)
-    users_raw = await users_cursor.to_list(None)
+    users_raw = await users_cursor.to_list(1000)
     users = [parse_from_mongo(user) for user in users_raw]
     
     leaderboard = []
     for i, user in enumerate(users):
-        leaderboard.append({
-            "rank": i + 1,
-            "id": user["id"],
-            "full_name": user["full_name"],
-            "bio": user.get("bio", ""),
-            "profile_image": user.get("profile_image"),
-            "total_tests": user["total_tests"],
-            "average_score": round(user["average_score"], 1),
-            "is_premium": user.get("is_premium", False)
-        })
+        # Ensure user is a dictionary before accessing keys
+        if isinstance(user, dict):
+            # Safely convert average_score to float
+            avg_score_raw = user.get("average_score", 0.0)
+            try:
+                # Check if it's a valid type for float conversion
+                if isinstance(avg_score_raw, (int, float, str)):
+                    avg_score = float(avg_score_raw)
+                else:
+                    avg_score = 0.0
+            except (ValueError, TypeError):
+                avg_score = 0.0
+                
+            leaderboard.append({
+                "rank": i + 1,
+                "id": user.get("id", ""),
+                "full_name": user.get("full_name", ""),
+                "bio": user.get("bio", ""),
+                "profile_image": user.get("profile_image"),
+                "total_tests": user.get("total_tests", 0),
+                "average_score": round(avg_score, 1),
+                "is_premium": user.get("is_premium", False)
+            })
+        else:
+            # Fallback for unexpected user data type
+            leaderboard.append({
+                "rank": i + 1,
+                "id": "",
+                "full_name": "",
+                "bio": "",
+                "profile_image": None,
+                "total_tests": 0,
+                "average_score": 0.0,
+                "is_premium": False
+            })
     
     return leaderboard
 
@@ -1170,7 +1213,7 @@ async def get_user_profile(user_id: str):
     recent_tests_cursor = db.test_results.find(
         {"user_id": user_id}
     ).sort("completed_at", -1).limit(5)
-    recent_tests_raw = await recent_tests_cursor.to_list(None)
+    recent_tests_raw = await recent_tests_cursor.to_list(1000)
     recent_tests = [parse_from_mongo(test) for test in recent_tests_raw]
     
     return {
@@ -1185,7 +1228,7 @@ async def upload_profile_image(
     current_user: User = Depends(get_current_user)
 ):
     # Check file type
-    if not file.content_type.startswith("image/"):
+    if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Yalnız şəkil faylları qəbul edilir")
     
     # Read and process image
@@ -1275,14 +1318,14 @@ async def update_notification_settings(settings: dict, current_user: User = Depe
     
     return {
         "message": "Bildiri\u015f t\u0259nziml\u0259m\u0259l\u0259ri yenil\u0259ndi",
-        "notify_new_questions": updated_user.get("notify_new_questions", True)
+        "notify_new_questions": updated_user.get("notify_new_questions", True) if updated_user else True
     }
 
 # User notifications
 @api_router.get("/notifications")
 async def get_notifications(current_user: User = Depends(get_current_user)):
     notifications_cursor = db.user_notifications.find({"user_id": current_user.id}).sort("created_at", -1).limit(20)
-    notifications_raw = await notifications_cursor.to_list(None)
+    notifications_raw = await notifications_cursor.to_list(1000)
     notifications = [parse_from_mongo(notif) for notif in notifications_raw]
     return notifications
 
@@ -1311,7 +1354,7 @@ async def create_test_notification(current_user: User = Depends(get_current_user
 @api_router.get("/admin/question-submissions")
 async def get_question_submissions(admin: User = Depends(get_admin_user)):
     submissions_cursor = db.user_question_submissions.find().sort("submitted_at", -1)
-    submissions_raw = await submissions_cursor.to_list(None)
+    submissions_raw = await submissions_cursor.to_list(1000)
     submissions = [parse_from_mongo(sub) for sub in submissions_raw]
     return submissions
 
@@ -1411,20 +1454,29 @@ async def get_admin_stats(admin: User = Depends(get_admin_user)):
         {},
         {"password": 0}
     ).sort("created_at", -1).limit(10)
-    recent_users_raw = await recent_users_cursor.to_list(None)
+    recent_users_raw = await recent_users_cursor.to_list(1000)
     recent_users = [parse_from_mongo(user) for user in recent_users_raw]
+    
+    # Ensure recent_users is a list of dictionaries
+    recent_users_dicts = []
+    for user in recent_users:
+        if isinstance(user, dict):
+            recent_users_dicts.append(user)
+        else:
+            # Convert to dict if it's not already
+            recent_users_dicts.append({"id": str(user) if user else ""})
     
     return AdminStats(
         total_users=total_users,
         total_questions=total_questions,
         total_tests=total_tests,
-        recent_users=recent_users
+        recent_users=recent_users_dicts
     )
 
 @api_router.get("/admin/users")
 async def get_all_users(admin: User = Depends(get_admin_user)):
     users_cursor = db.users.find({}, {"password": 0})
-    users_raw = await users_cursor.to_list(None)
+    users_raw = await users_cursor.to_list(1000)
     users = [parse_from_mongo(user) for user in users_raw]
     return users
 
@@ -1452,12 +1504,12 @@ async def toggle_premium(user_id: str, admin: User = Depends(get_admin_user)):
 @api_router.get("/admin/questions")
 async def get_all_questions(admin: User = Depends(get_admin_user)):
     questions_cursor = db.questions.find()
-    questions_raw = await questions_cursor.to_list(None)
+    questions_raw = await questions_cursor.to_list(1000)
     normalized = []
     for q in questions_raw:
         qn = parse_from_mongo(dict(q))
         # Ensure id field is present
-        if 'id' not in qn:
+        if 'id' not in qn and isinstance(qn, dict):
             _id = q.get('_id')
             if _id is not None:
                 try:
@@ -1465,17 +1517,18 @@ async def get_all_questions(admin: User = Depends(get_admin_user)):
                 except Exception:
                     pass
         # Ensure options array exists for UI
-        if 'options' not in qn or not isinstance(qn.get('options'), list):
+        if isinstance(qn, dict) and ('options' not in qn or not isinstance(qn.get('options'), list)):
             opts = [qn.get('option_a'), qn.get('option_b'), qn.get('option_c'), qn.get('option_d')]
             qn['options'] = [o for o in opts if o is not None]
         # Normalize correct_answer to int index
-        ca = qn.get('correct_answer')
-        if isinstance(ca, str):
-            if ca.isdigit():
-                qn['correct_answer'] = int(ca)
-            else:
-                letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
-                qn['correct_answer'] = letter_map.get(ca.upper(), ca)
+        if isinstance(qn, dict):
+            ca = qn.get('correct_answer')
+            if isinstance(ca, str):
+                if ca.isdigit():
+                    qn['correct_answer'] = int(ca)
+                else:
+                    letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
+                    qn['correct_answer'] = letter_map.get(ca.upper(), ca)
         normalized.append(qn)
     return normalized
 from uuid import uuid4
@@ -1616,14 +1669,16 @@ async def create_user_quiz(quiz_data: UserQuizCreate, current_user: User = Depen
 @api_router.get("/user-quizzes/my-quizzes")
 async def get_my_quizzes(current_user: User = Depends(get_current_user)):
     quizzes_cursor = db.user_quizzes.find({"creator_id": current_user.id})
-    quizzes = await quizzes_cursor.to_list(None)
+    quizzes = await quizzes_cursor.to_list(1000)
     
     normalized_quizzes = []
     for quiz in quizzes:
         quiz_data = parse_from_mongo(quiz)
         # Get attempt count
-        attempt_count = await db.shared_quiz_attempts.count_documents({"quiz_id": quiz_data["id"]})
-        quiz_data["total_attempts"] = attempt_count
+        quiz_id = quiz_data.get("id", "") if isinstance(quiz_data, dict) else ""
+        attempt_count = await db.shared_quiz_attempts.count_documents({"quiz_id": quiz_id})
+        if isinstance(quiz_data, dict):
+            quiz_data["total_attempts"] = attempt_count
         normalized_quizzes.append(quiz_data)
     
     return normalized_quizzes
@@ -1636,11 +1691,13 @@ async def get_shared_quiz(share_code: str):
     
     quiz_data = parse_from_mongo(quiz)
     # Don't include correct answers in the response
-    for question in quiz_data["questions"]:
-        if "correct_answer" in question:
-            del question["correct_answer"]
-        if "explanation" in question:
-            del question["explanation"]
+    if isinstance(quiz_data, dict) and "questions" in quiz_data:
+        for question in quiz_data.get("questions", []):
+            if isinstance(question, dict):
+                if "correct_answer" in question:
+                    del question["correct_answer"]
+                if "explanation" in question:
+                    del question["explanation"]
     
     return quiz_data
 
@@ -1654,22 +1711,35 @@ async def submit_shared_quiz(share_code: str, submission: SharedQuizSubmission):
     quiz_data = parse_from_mongo(quiz)
     
     # Calculate score
-    total_questions = len(quiz_data["questions"])
+    total_questions = len(quiz_data.get("questions", [])) if isinstance(quiz_data, dict) else 0
     correct_answers = 0
     
-    for question_index, user_answer in submission.answers.items():
-        if question_index < len(quiz_data["questions"]):
-            correct_answer = quiz_data["questions"][question_index]["correct_answer"]
-            if user_answer == correct_answer:
-                correct_answers += 1
+    if isinstance(quiz_data, dict) and "questions" in quiz_data:
+        for question_index, user_answer in submission.answers.items():
+            if question_index < len(quiz_data["questions"]):
+                question = quiz_data["questions"][question_index]
+                if isinstance(question, dict) and "correct_answer" in question:
+                    correct_answer = question["correct_answer"]
+                    if user_answer == correct_answer:
+                        correct_answers += 1
     
     score = int((correct_answers / total_questions) * 100) if total_questions > 0 else 0
     
     # Save attempt
+    # Safely extract values with proper type checking
+    quiz_id = ""
+    quiz_title = ""
+    quiz_creator_id = ""
+    
+    if isinstance(quiz_data, dict):
+        quiz_id = str(quiz_data.get("id", "")) if quiz_data.get("id") is not None else ""
+        quiz_title = str(quiz_data.get("title", "")) if quiz_data.get("title") is not None else ""
+        quiz_creator_id = str(quiz_data.get("creator_id", "")) if quiz_data.get("creator_id") is not None else ""
+    
     attempt = SharedQuizAttempt(
-        quiz_id=quiz_data["id"],
-        quiz_title=quiz_data["title"],
-        quiz_creator_id=quiz_data["creator_id"],
+        quiz_id=quiz_id,
+        quiz_title=quiz_title,
+        quiz_creator_id=quiz_creator_id,
         solver_name=submission.user_name,
         answers=submission.answers,
         score=score,
@@ -1682,29 +1752,32 @@ async def submit_shared_quiz(share_code: str, submission: SharedQuizSubmission):
     await db.shared_quiz_attempts.insert_one(attempt_dict)
     
     # Update quiz attempt count
-    await db.user_quizzes.update_one(
-        {"id": quiz_data["id"]},
-        {"$inc": {"total_attempts": 1}}
-    )
+    if quiz_id:
+        await db.user_quizzes.update_one(
+            {"id": quiz_id},
+            {"$inc": {"total_attempts": 1}}
+        )
     
     # Send notification to quiz creator
-    notification = UserNotification(
-        user_id=quiz_data["creator_id"],
-        title="Quiz Həll Edildi! 🎉",
-        message=f"{submission.user_name} adlı istifadəçi \"{quiz_data['title']}\" quizinizi həll etdi və {score}% nəticə əldə etdi.",
-        type="success"
-    )
-    
-    notification_dict = prepare_for_mongo(notification.dict())
-    await db.notifications.insert_one(notification_dict)
+    if quiz_creator_id:
+        notification = UserNotification(
+            user_id=quiz_creator_id,
+            title="Quiz Həll Edildi! 🎉",
+            message=f"{submission.user_name} adlı istifadəçi \"{quiz_title}\" quizinizi həll etdi və {score}% nəticə əldə etdi.",
+            type="success"
+        )
+        
+        notification_dict = prepare_for_mongo(notification.dict())
+        await db.notifications.insert_one(notification_dict)
     
     # Return results with correct answers for review
+    questions = quiz_data.get("questions", []) if isinstance(quiz_data, dict) else []
     return {
         "score": score,
         "percentage": score,
         "correct_answers": correct_answers,
         "total_questions": total_questions,
-        "questions_with_answers": quiz_data["questions"]
+        "questions_with_answers": questions
     }
 
 @api_router.get("/quiz-stats/{quiz_id}")
@@ -1716,11 +1789,13 @@ async def get_quiz_stats(quiz_id: str, current_user: User = Depends(get_current_
     
     # Get all attempts
     attempts_cursor = db.shared_quiz_attempts.find({"quiz_id": quiz_id})
-    attempts = await attempts_cursor.to_list(None)
+    attempts = await attempts_cursor.to_list(1000)
+    
+    quiz_title = quiz.get("title", "") if isinstance(quiz, dict) else ""
     
     if not attempts:
         return {
-            "quiz_title": quiz["title"],
+            "quiz_title": quiz_title,
             "total_attempts": 0,
             "average_score": 0,
             "attempts": []
@@ -1728,7 +1803,11 @@ async def get_quiz_stats(quiz_id: str, current_user: User = Depends(get_current_
     
     # Calculate statistics
     total_attempts = len(attempts)
-    average_score = sum(attempt["score"] for attempt in attempts) / total_attempts
+    total_score = 0
+    for attempt in attempts:
+        if isinstance(attempt, dict) and "score" in attempt:
+            total_score += attempt["score"]
+    average_score = total_score / total_attempts if total_attempts > 0 else 0
     
     normalized_attempts = []
     for attempt in attempts:
@@ -1736,7 +1815,7 @@ async def get_quiz_stats(quiz_id: str, current_user: User = Depends(get_current_
         normalized_attempts.append(attempt_data)
     
     return {
-        "quiz_title": quiz["title"],
+        "quiz_title": quiz_title,
         "total_attempts": total_attempts,
         "average_score": round(average_score, 1),
         "attempts": normalized_attempts
