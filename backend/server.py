@@ -69,12 +69,15 @@ class User(BaseModel):
     last_active: Optional[datetime] = None
     # Premium flag
     is_premium: bool = False
+    # Notification preferences
+    notify_new_questions: bool = True
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str
     bio: Optional[str] = ""
+    notify_new_questions: Optional[bool] = True
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -90,6 +93,7 @@ class UserProfile(BaseModel):
     average_score: float
     is_admin: bool
     is_premium: Optional[bool] = False
+    notify_new_questions: Optional[bool] = True
 
 class UserQuestionSubmission(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -119,6 +123,7 @@ class UserNotification(BaseModel):
     message: str
     type: str = "info"  # info, success, warning, error
     read: bool = False
+    question_id: Optional[str] = None  # For new question notifications
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Question(BaseModel):
@@ -598,7 +603,8 @@ async def register(user_data: UserCreate):
     user = User(
         email=user_data.email,
         full_name=user_data.full_name,
-        bio=user_data.bio
+        bio=user_data.bio,
+        notify_new_questions=user_data.notify_new_questions
     )
     
     user_dict = user.dict()
@@ -641,29 +647,46 @@ from bson import ObjectId
 class StartOptions(BaseModel):
     limit: Optional[int] = None
     premium_only: Optional[bool] = False
+    specific_question_id: Optional[str] = None  # For single question tests
 
 @api_router.post("/tests/start")
 async def start_test(opts: Optional[StartOptions] = None, current_user: User = Depends(get_current_user)):
     print("Current user:", current_user)
-    # Mövcud bazadan təsadüfi suallar seç (limit verilə bilər)
-    # Premium rejim: premium istifadəçi üçün yalnız premium suallar; adi istifadəçi üçün premium suallar daxil edilməsin
-    query = {}
-    if not current_user.is_premium:
-        query = {"is_premium": {"$ne": True}}
-    elif opts and opts.premium_only:
-        query = {"is_premium": True}
-    all_questions = await db.questions.find(query).to_list(None)
-    if not all_questions:
-        raise HTTPException(status_code=400, detail="Kifayət qədər sual yoxdur")
-    requested = 8
-    if opts and opts.limit:
+    
+    # Check if this is a single question test
+    if opts and opts.specific_question_id:
+        # Find the specific question
         try:
-            requested = max(1, int(opts.limit))
+            specific_question = await db.questions.find_one({"_id": ObjectId(opts.specific_question_id)})
         except Exception:
-            requested = 8
-    if len(all_questions) < requested:
-        requested = len(all_questions)
-    selected_questions = random.sample(all_questions, requested)
+            # Try with string id
+            specific_question = await db.questions.find_one({"id": opts.specific_question_id})
+        
+        if not specific_question:
+            raise HTTPException(status_code=404, detail="Sual tapılmadı")
+        
+        selected_questions = [specific_question]
+    else:
+        # Original logic for multiple questions
+        # Mövcud bazadan təsadüfi suallar seç (limit verilə bilər)
+        # Premium rejim: premium istifadəçi üçün yalnız premium suallar; adi istifadəçi üçün premium suallar daxil edilməsin
+        query = {}
+        if not current_user.is_premium:
+            query = {"is_premium": {"$ne": True}}
+        elif opts and opts.premium_only:
+            query = {"is_premium": True}
+        all_questions = await db.questions.find(query).to_list(None)
+        if not all_questions:
+            raise HTTPException(status_code=400, detail="Kifayət qədər sual yoxdur")
+        requested = 8
+        if opts and opts.limit:
+            try:
+                requested = max(1, int(opts.limit))
+            except Exception:
+                requested = 8
+        if len(all_questions) < requested:
+            requested = len(all_questions)
+        selected_questions = random.sample(all_questions, requested)
     
     # Create test session (save only question ids as string)
     test_session = TestSession(
@@ -712,6 +735,13 @@ async def start_test(opts: Optional[StartOptions] = None, current_user: User = D
         "current_question": 0,
         "question": question_data
     }
+
+# New endpoint for starting single question tests
+@api_router.post("/tests/start-single-question/{question_id}")
+async def start_single_question_test(question_id: str, current_user: User = Depends(get_current_user)):
+    """Start a test with only a specific question - used for notification clicks"""
+    opts = StartOptions(specific_question_id=question_id, limit=1)
+    return await start_test(opts, current_user)
 
 # ... əvvəlki kod eyni qalır ...
 from pydantic import BaseModel
@@ -1232,6 +1262,22 @@ async def submit_question(question_data: UserQuestionCreate, current_user: User 
     
     return {"message": "Sualınız təsdiqlənmək üçün göndərildi", "submission_id": submission.id}
 
+@api_router.post("/profile/update-notification-settings")
+async def update_notification_settings(settings: dict, current_user: User = Depends(get_current_user)):
+    # Update user notification preferences
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {"notify_new_questions": settings.get("notify_new_questions", True)}}
+    )
+    
+    # Get updated user data
+    updated_user = await db.users.find_one({"id": current_user.id})
+    
+    return {
+        "message": "Bildiri\u015f t\u0259nziml\u0259m\u0259l\u0259ri yenil\u0259ndi",
+        "notify_new_questions": updated_user.get("notify_new_questions", True)
+    }
+
 # User notifications
 @api_router.get("/notifications")
 async def get_notifications(current_user: User = Depends(get_current_user)):
@@ -1303,7 +1349,7 @@ async def approve_question_submission(submission_id: str, admin: User = Depends(
         }}
     )
     
-    # Send notification to user
+    # Send notification to user who submitted
     notification = UserNotification(
         user_id=submission["user_id"],
         title="Sualınız təsdiqləndi! 🎉",
@@ -1311,6 +1357,19 @@ async def approve_question_submission(submission_id: str, admin: User = Depends(
         type="success"
     )
     await db.user_notifications.insert_one(prepare_for_mongo(notification.dict()))
+    
+    # Send notification to all users who want to be notified about new questions
+    users_to_notify = db.users.find({"notify_new_questions": True})
+    async for user in users_to_notify:
+        if user["id"] != submission["user_id"]:  # Don't send to the submitter again
+            new_question_notification = UserNotification(
+                user_id=user["id"],
+                title="Yeni sual əlavə olundu! 📚",
+                message=f"Yeni sual sistemə əlavə edildi: '{submission['question_text'][:50]}...' - Kateqoriya: {submission['category']}",
+                type="info",
+                question_id=qid  # Add the question ID for single question tests
+            )
+            await db.user_notifications.insert_one(prepare_for_mongo(new_question_notification.dict()))
     
     return {"message": "Sual təsdiqləndi və əlavə olundu", "question_id": qid}
 
@@ -1451,6 +1510,19 @@ async def create_question(question_data: QuestionCreate, admin: User = Depends(g
 
     insert_result = await db.questions.insert_one(question_dict)
     created = await db.questions.find_one({"_id": insert_result.inserted_id})
+    
+    # Send notification to all users who want to be notified about new questions
+    users_to_notify = db.users.find({"notify_new_questions": True})
+    async for user in users_to_notify:
+        new_question_notification = UserNotification(
+            user_id=user["id"],
+            title="Yeni sual əlavə olundu! 📚",
+            message=f"Admin tərəfindən yeni sual əlavə edildi: '{question_data.question_text[:50]}...' - Kateqoriya: {question_data.category}",
+            type="info",
+            question_id=qid  # Add the question ID for single question tests
+        )
+        await db.user_notifications.insert_one(prepare_for_mongo(new_question_notification.dict()))
+    
     return parse_from_mongo(created)
 
 

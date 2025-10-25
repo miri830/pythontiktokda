@@ -8,7 +8,10 @@ cd backend
 python -m venv venv
 
 # Virtual environment aktivləşdir
+
 # Windows üçün:
+venv\Scripts\Activate.ps1
+
 # Mac/Linux üçün:
 source venv/bin/activate
 

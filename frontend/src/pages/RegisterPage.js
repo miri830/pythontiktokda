@@ -15,7 +15,8 @@ const RegisterPage = () => {
     password: '',
     confirmPassword: '',
     full_name: '',
-    bio: ''
+    bio: '',
+    notify_new_questions: true
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -24,9 +25,10 @@ const RegisterPage = () => {
   const navigate = useNavigate();
 
   const handleChange = (e) => {
+    const { name, value, type, checked } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: type === 'checkbox' ? checked : value
     });
   };
 
@@ -46,7 +48,14 @@ const RegisterPage = () => {
     setIsLoading(true);
 
     try {
-      await register(formData.email, formData.password, formData.full_name, formData.bio);
+      const registerData = {
+        email: formData.email,
+        password: formData.password,
+        full_name: formData.full_name,
+        bio: formData.bio,
+        notify_new_questions: formData.notify_new_questions
+      };
+      await register(registerData.email, registerData.password, registerData.full_name, registerData.bio, registerData.notify_new_questions);
       toast.success('Uğurla qeydiyyatdan keçdiniz!');
       navigate('/dashboard');
     } catch (error) {
@@ -196,6 +205,25 @@ const RegisterPage = () => {
                   placeholder="Özünüz haqqında qısa məlumat..."
                   rows={3}
                 />
+              </div>
+
+              <div className="flex items-start space-x-3 bg-white/5 p-4 rounded-lg border border-white/10">
+                <input
+                  type="checkbox"
+                  id="notify_new_questions"
+                  name="notify_new_questions"
+                  checked={formData.notify_new_questions}
+                  onChange={handleChange}
+                  className="w-4 h-4 text-violet-600 bg-white/10 border-white/30 rounded focus:ring-violet-500 focus:ring-2 mt-1"
+                />
+                <div>
+                  <Label htmlFor="notify_new_questions" className="text-white font-medium cursor-pointer">
+                    Yeni Suallar Haqqında Bildiriş
+                  </Label>
+                  <p className="text-white/70 text-sm mt-1">
+                    Admin tərəfindən yeni suallar əlavə edildikdə bildiriş almaq istəyirəm
+                  </p>
+                </div>
               </div>
 
               <Button

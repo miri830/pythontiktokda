@@ -72,9 +72,19 @@ const CreateQuizPage = () => {
   const handleOptionChange = (index, value) => {
     const newOptions = [...currentQuestion.options];
     newOptions[index] = value;
+    
+    // If the current correct answer becomes empty, reset to first non-empty option
+    let newCorrectAnswer = currentQuestion.correct_answer;
+    if (index === currentQuestion.correct_answer && !value.trim()) {
+      // Find first non-empty option
+      newCorrectAnswer = newOptions.findIndex(opt => opt.trim() !== '');
+      if (newCorrectAnswer === -1) newCorrectAnswer = 0; // fallback to first option
+    }
+    
     setCurrentQuestion(prev => ({
       ...prev,
-      options: newOptions
+      options: newOptions,
+      correct_answer: newCorrectAnswer
     }));
   };
 
@@ -89,10 +99,26 @@ const CreateQuizPage = () => {
       toast.error('Ən azı 2 cavab variantı daxil edin');
       return;
     }
+    
+    // Check if correct answer index is valid for filled options
+    if (currentQuestion.correct_answer >= filledOptions.length) {
+      toast.error('Düzgün cavabı seçin - boş variantlar silinəcək');
+      return;
+    }
+    
+    // Create a clean question with only filled options and adjusted correct_answer
+    const cleanQuestion = {
+      ...currentQuestion,
+      options: filledOptions,
+      // Adjust correct_answer index if empty options were removed before the correct one
+      correct_answer: filledOptions.findIndex((option, index) => {
+        return currentQuestion.options[currentQuestion.correct_answer] === option;
+      })
+    };
 
     if (isEditing) {
       const newQuestions = [...quiz.questions];
-      newQuestions[editingIndex] = { ...currentQuestion };
+      newQuestions[editingIndex] = cleanQuestion;
       setQuiz(prev => ({ ...prev, questions: newQuestions }));
       setIsEditing(false);
       setEditingIndex(-1);
@@ -100,7 +126,7 @@ const CreateQuizPage = () => {
     } else {
       setQuiz(prev => ({
         ...prev,
-        questions: [...prev.questions, { ...currentQuestion }]
+        questions: [...prev.questions, cleanQuestion]
       }));
       toast.success('Sual əlavə edildi');
     }
@@ -134,8 +160,8 @@ const CreateQuizPage = () => {
       return;
     }
     
-    if (quiz.questions.length < 3) {
-      toast.error('Ən azı 3 sual əlavə edin');
+    if (quiz.questions.length < 5) {
+      toast.error('Zəhmət olmasa minimum 5 sual daxil edin');
       return;
     }
 
@@ -165,7 +191,16 @@ const CreateQuizPage = () => {
       
       toast.success('Quiz uğurla yaradıldı! 🎉');
     } catch (error) {
-      toast.error(error.message || 'Xəta baş verdi');
+      console.error('Quiz creation error:', error);
+      if (error.message.includes('401')) {
+        toast.error('Giriş vaxtınız bitişdi. Yənidən giriş edin.');
+        localStorage.removeItem('token');
+        navigate('/login');
+      } else if (error.message.includes('400')) {
+        toast.error('Quiz məlumatlarında xəta var. Yənidən yoxlayın.');
+      } else {
+        toast.error(error.message || 'Xəta baş verdi. Yənidən cəhd edin.');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -294,7 +329,7 @@ const CreateQuizPage = () => {
             <div className="flex items-center space-x-4">
               <Button
                 onClick={saveQuiz}
-                disabled={isSaving || quiz.questions.length < 3}
+                disabled={isSaving}
                 className="bg-green-600 hover:bg-green-700 text-white"
               >
                 {isSaving ? (
@@ -399,27 +434,42 @@ const CreateQuizPage = () => {
                 <div>
                   <label className="block text-sm font-medium mb-2">Cavab Variantları</label>
                   <div className="space-y-2">
-                    {currentQuestion.options.map((option, index) => (
-                      <div key={index} className="flex items-center space-x-2">
-                        <input
-                          type="radio"
-                          name="correct"
-                          checked={currentQuestion.correct_answer === index}
-                          onChange={() => handleQuestionChange('correct_answer', index)}
-                          className="text-green-500"
-                        />
-                        <input
-                          type="text"
-                          value={option}
-                          onChange={(e) => handleOptionChange(index, e.target.value)}
-                          placeholder={`${index + 1}. cavab variantı`}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                        />
-                      </div>
-                    ))}
+                    {currentQuestion.options.map((option, index) => {
+                      const isSelected = currentQuestion.correct_answer === index;
+                      const hasValue = option.trim() !== '';
+                      
+                      return (
+                        <div key={index} className={`flex items-center space-x-2 p-2 rounded-lg transition-all ${
+                          isSelected && hasValue ? 'bg-green-50 border border-green-200' : 'border border-transparent'
+                        }`}>
+                          <input
+                            type="radio"
+                            name="correct"
+                            checked={isSelected}
+                            onChange={() => handleQuestionChange('correct_answer', index)}
+                            className="text-green-500"
+                            disabled={!hasValue}
+                          />
+                          <input
+                            type="text"
+                            value={option}
+                            onChange={(e) => handleOptionChange(index, e.target.value)}
+                            placeholder={`${index + 1}. cavab variantı`}
+                            className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
+                              isSelected && hasValue ? 'border-green-300 bg-green-50' : 'border-gray-300'
+                            }`}
+                          />
+                          {isSelected && hasValue && (
+                            <span className="text-green-600 text-sm font-medium flex items-center">
+                              ✓ Düzgün cavab
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    Düzgün cavabı seçin və variantları doldurun
+                    📝 Düzgün cavabı seçin və variantları doldurun. Boş variantlar avtomatik silinəcək.
                   </p>
                 </div>
                 
@@ -483,7 +533,7 @@ const CreateQuizPage = () => {
                     <Eye className="w-5 h-5 mr-2" />
                     Əlavə Edilmiş Suallar ({quiz.questions.length})
                   </span>
-                  {quiz.questions.length >= 3 && (
+                  {quiz.questions.length >= 5 && (
                     <span className="text-green-600 text-sm font-medium">
                       ✓ Saxlamağa hazır
                     </span>
@@ -495,7 +545,7 @@ const CreateQuizPage = () => {
                   <div className="text-center py-8 text-gray-500">
                     <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                     <p>Hələ sual əlavə edilməyib</p>
-                    <p className="text-sm">Minimum 3 sual lazımdır</p>
+                    <p className="text-sm">Minimum 5 sual lazımdır</p>
                   </div>
                 ) : (
                   <div className="space-y-4 max-h-[600px] overflow-y-auto">

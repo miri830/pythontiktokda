@@ -68,6 +68,26 @@ const NotificationsPage = () => {
     }
   };
 
+  const practiceQuestion = async (questionId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/tests/start-single-question/${questionId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const testData = await response.json();
+        navigate(`/test/${testData.session_id}`);
+        toast.success('Sual təcrubəsinə başlayın!');
+      } else {
+        throw new Error('Test başlatma xətası');
+      }
+    } catch (error) {
+      toast.error('Sual təcrubəsi başlatma xətası');
+    }
+  };
+
   const getNotificationIcon = (type) => {
     switch (type) {
       case 'success':
@@ -218,6 +238,22 @@ const NotificationsPage = () => {
                             <p className="mt-2 text-xs text-gray-500">
                               {formatDate(notification.created_at)}
                             </p>
+                            
+                            {/* Practice Button for new question notifications */}
+                            {notification.question_id && (
+                              <div className="mt-3">
+                                <Button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    practiceQuestion(notification.question_id);
+                                  }}
+                                  size="sm"
+                                  className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
+                                >
+                                  🎧 Bu sualı təcrubə et
+                                </Button>
+                              </div>
+                            )}
                           </div>
                           
                           <div className="flex items-center space-x-2 ml-4">

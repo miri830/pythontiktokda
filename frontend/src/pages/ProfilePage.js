@@ -18,7 +18,9 @@ import {
   Edit,
   Flame,
   Star,
-  Lock
+  Lock,
+  Bell,
+  Settings
 } from 'lucide-react';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -33,6 +35,7 @@ const ProfilePage = () => {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
+  const [updatingNotifications, setUpdatingNotifications] = useState(false);
 
   const isOwnProfile = currentUser?.id === userId;
 
@@ -105,6 +108,41 @@ const ProfilePage = () => {
       toast.error(error.message || 'Şəkil yüklənə bilmədi');
     } finally {
       setUploadingImage(false);
+    }
+  };
+
+  const handleNotificationToggle = async (notifyNewQuestions) => {
+    setUpdatingNotifications(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/profile/update-notification-settings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ notify_new_questions: notifyNewQuestions })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Bildiriş tənzimləməsi yenilənə bilmədi');
+      }
+      
+      const data = await response.json();
+      
+      // Update profile state
+      setProfile(prev => ({ ...prev, notify_new_questions: data.notify_new_questions }));
+      
+      // Update current user if it's own profile
+      if (isOwnProfile) {
+        updateUser({ ...currentUser, notify_new_questions: data.notify_new_questions });
+      }
+      
+      toast.success('Bildiriş tənzimləməsi yeniləndi!');
+    } catch (error) {
+      toast.error(error.message || 'Xəta baş verdi');
+    } finally {
+      setUpdatingNotifications(false);
     }
   };
 
@@ -344,6 +382,37 @@ const ProfilePage = () => {
                       {profile.bio}
                     </p>
                   )
+                )}
+                
+                {/* Notification Settings - Only show for own profile */}
+                {isOwnProfile && (
+                  <div className="mb-6 max-w-md">
+                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+                            <Bell className="w-5 h-5 text-indigo-600" />
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-gray-800">Yeni Sual Bildirişləri</h4>
+                            <p className="text-sm text-gray-600">Admin tərəfindən yeni suallar əlavə edildikdə bildiriş al</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {updatingNotifications && (
+                            <div className="loading-spinner w-4 h-4"></div>
+                          )}
+                          <input
+                            type="checkbox"
+                            checked={profile.notify_new_questions ?? true}
+                            onChange={(e) => handleNotificationToggle(e.target.checked)}
+                            disabled={updatingNotifications}
+                            className="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500 focus:ring-2"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {/* Quick Stats */}

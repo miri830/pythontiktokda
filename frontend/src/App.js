@@ -109,13 +109,13 @@ const AuthProvider = ({ children }) => {
     return data;
   };
 
-  const register = async (email, password, full_name, bio = '') => {
+  const register = async (email, password, full_name, bio = '', notify_new_questions = true) => {
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ email, password, full_name, bio })
+      body: JSON.stringify({ email, password, full_name, bio, notify_new_questions })
     });
 
     if (!response.ok) {
